@@ -46,6 +46,7 @@ def build_demo_scene() -> dict[str, Any]:
         _feature("waste", _polygon(79, 40.5, 81, 42.5), vineyard_id="V-001", target_id="W-001"),
         _feature("inspection", {"type": "Point", "coordinates": _point(55, 27.5)},
                  vineyard_id="V-001", row_id="V-001-R001", target_id="I-001", reason="visible_gap"),
+        _feature("start", {"type": "Point", "coordinates": _point(8, 27.5)}),
         _feature("route", {"type": "LineString", "coordinates": [
             _point(8, 27.5), _point(112, 27.5), _point(112, 42.5),
             _point(8, 42.5), _point(8, 27.5),

@@ -8,10 +8,14 @@ dependencies = [
   "uvicorn>=0.35,<1",
   "pyproj>=3.7,<4",
   "shapely>=2.1,<3",
+  "rasterio>=1.4,<2",
+  "numpy>=2,<3",
 ]
 
 [project.scripts]
 marcaj-export = "marcaj.export:main"
+marcaj-pack = "marcaj.package:main"
+marcaj-scene = "marcaj.cvat:main"
 
 [build-system]
 requires = ["hatchling"]

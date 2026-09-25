@@ -29,7 +29,11 @@ type Scene = {
   };
 };
 
-const map = L.map('map', { attributionControl: false, scrollWheelZoom: false, zoomControl: true, zoomSnap: 0.1 });
+const map = L.map('map', { preferCanvas: true, scrollWheelZoom: false, zoomControl: true, zoomSnap: 0.1, maxZoom: 24 });
+L.tileLayer('/api/imagery/{z}/{x}/{y}.png', {
+  minZoom: 13, maxNativeZoom: 22, maxZoom: 24,
+  attribution: 'Sireț3 imagery CC BY 4.0, 3DATA COLLECT / OpenAerialMap · route data © OpenStreetMap contributors, ODbL',
+}).addTo(map);
 const layers = new Map<string, L.GeoJSON>();
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 
@@ -46,10 +50,11 @@ function setText(id: string, value: string): void {
 function featureStyle(label: string): L.PathOptions {
   switch (label) {
     case 'block': return { color: '#928F85', weight: 2, dashArray: '6 6', fillColor: '#FFFFFF', fillOpacity: 0.22 };
-    case 'passage': return { color: '#A7906A', weight: 1, fillColor: '#E9DEC8', fillOpacity: 0.75 };
-    case 'forbidden': return { color: '#CC1F1F', weight: 2, fillColor: '#FEE2E2', fillOpacity: 0.65 };
-    case 'interrow_area': return { color: '#B7CE91', weight: 1, fillColor: '#D6E6B8', fillOpacity: 0.7 };
-    case 'vineyard': return { color: '#467410', weight: 1.5, fillColor: '#5C960C', fillOpacity: 0.88 };
+    case 'study_area': return { color: '#F5C400', weight: 2, dashArray: '6 4', fill: false };
+    case 'passage': return { color: '#A7906A', weight: 1, fillColor: '#E9DEC8', fillOpacity: 0.3 };
+    case 'forbidden': return { color: '#CC1F1F', weight: 2, fillColor: '#FEE2E2', fillOpacity: 0.35 };
+    case 'interrow_area': return { color: '#B7CE91', weight: 1, fillColor: '#D6E6B8', fillOpacity: 0.3 };
+    case 'vineyard': return { color: '#467410', weight: 1.5, fillColor: '#5C960C', fillOpacity: 0.45 };
     case 'row': return { color: '#625A4B', weight: 2, dashArray: '4 5', opacity: 0.9 };
     case 'waste': return { color: '#C43E00', weight: 2, fillColor: '#E8772E', fillOpacity: 0.8 };
     case 'route': return { color: '#1F5AEE', weight: 4, opacity: 0.95 };
@@ -74,7 +79,7 @@ function bindDetails(feature: SceneFeature, layer: L.Layer): void {
 }
 
 function renderMap(features: Scene['features']): void {
-  const order = ['block', 'passage', 'forbidden', 'interrow_area', 'vineyard', 'row', 'waste', 'inspection', 'route'];
+  const order = ['study_area', 'block', 'passage', 'forbidden', 'interrow_area', 'vineyard', 'row', 'waste', 'inspection', 'route', 'start'];
   for (const label of order) {
     const matching = features.features.filter((feature) => feature.properties.label === label);
     if (matching.length === 0) continue;
@@ -82,14 +87,14 @@ function renderMap(features: Scene['features']): void {
     const layer = L.geoJSON(collection, {
       style: () => featureStyle(label),
       pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
-        radius: 7, color: '#FFFFFF', weight: 2, fillColor: '#1F5AEE', fillOpacity: 1,
+        radius: 7, color: '#FFFFFF', weight: 2, fillColor: label === 'start' ? '#CC1F1F' : '#1F5AEE', fillOpacity: 1,
       }),
       onEachFeature: (feature, object) => bindDetails(feature as SceneFeature, object),
     });
     layers.set(label, layer);
     layer.addTo(map);
   }
-  const bounds = layers.get('block')?.getBounds() ?? L.geoJSON(features).getBounds();
+  const bounds = (layers.get('study_area') ?? layers.get('block'))?.getBounds() ?? L.geoJSON(features).getBounds();
   if (bounds.isValid()) map.fitBounds(bounds.pad(0.08));
   else map.setView([47, 28], 12);
 }

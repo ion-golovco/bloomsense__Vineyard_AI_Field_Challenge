@@ -57,14 +57,14 @@ def measurement_rows(scene: dict[str, Any]) -> list[dict[str, Any]]:
         interrow_area = union_area(block_interrows)
         result.append({
             "level": "block", "vineyard_id": vineyard_id, "row_id": "", "block_count": "",
-            "row_count": len({item["properties"]["row_id"] for item in block_rows}),
+            "row_count": len({item["properties"].get("row_id", "") for item in block_rows}),
             "row_length_m": sum(shape(item["geometry"]).length for item in block_rows),
             "canopy_area_m2": canopy_area, "canopy_area_ha": canopy_area / 10_000,
             "interrow_area_m2": interrow_area, "interrow_area_ha": interrow_area / 10_000,
         })
         length_by_row: dict[str, float] = defaultdict(float)
         for item in block_rows:
-            length_by_row[item["properties"]["row_id"]] += shape(item["geometry"]).length
+            length_by_row[item["properties"].get("row_id", "")] += shape(item["geometry"]).length
         for row_id, length in sorted(length_by_row.items()):
             result.append({
                 "level": "row", "vineyard_id": vineyard_id, "row_id": row_id,
@@ -78,7 +78,7 @@ def measurement_rows(scene: dict[str, Any]) -> list[dict[str, Any]]:
     result.insert(0, {
         "level": "total", "vineyard_id": "", "row_id": "",
         "block_count": len(vineyard_ids),
-        "row_count": len({item["properties"]["row_id"] for item in rows}),
+        "row_count": len({item["properties"].get("row_id", "") for item in rows}),
         "row_length_m": sum(shape(item["geometry"]).length for item in rows),
         "canopy_area_m2": total_canopy, "canopy_area_ha": total_canopy / 10_000,
         "interrow_area_m2": total_interrow, "interrow_area_ha": total_interrow / 10_000,
