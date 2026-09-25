@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@theme {
+  --color-brand: #5C960C;
+  --color-brand-deep: #467410;
+  --color-brand-tint: #EEF6DE;
+  --color-paper: #F5F4F0;
+  --color-ink: #1B1A17;
+  --color-muted: #5F5B55;
+  --color-line: #E4E2DC;
+}
+
+:root { font-family: "Segoe UI", system-ui, sans-serif; }
+.metric-card { @apply rounded-2xl border border-line bg-white p-4 shadow-sm sm:p-5; }
+.metric-label { @apply text-xs font-semibold uppercase tracking-wide text-muted; }
+.metric-value { @apply mt-2 text-2xl font-bold tabular-nums text-ink sm:text-3xl; }
+.layer-button { @apply min-h-9 rounded-full border border-line bg-white px-3 text-xs font-semibold text-muted transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand; }
+.layer-button.is-active { @apply border-brand bg-brand-tint text-brand-deep; }
+.legend-dot { @apply mr-1.5 inline-block size-2.5 rounded-full align-middle; }
+#map { background-color: #F3F5ED; background-image: linear-gradient(#e7ebdf 1px, transparent 1px), linear-gradient(90deg, #e7ebdf 1px, transparent 1px); background-size: 32px 32px; }
+.leaflet-container { font: inherit; }
+.leaflet-popup-content { margin: 12px 15px; line-height: 1.4; }

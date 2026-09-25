@@ -1,0 +1,10 @@
+.DS_Store
+.env
+__pycache__/
+*.py[cod]
+backend/.venv/
+web/node_modules/
+web/dist/
+output/
+data/raw/
+data/generated/
