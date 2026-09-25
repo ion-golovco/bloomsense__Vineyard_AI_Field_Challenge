@@ -65,10 +65,18 @@ def main() -> None:
     parser.add_argument("--scene", type=Path, help="EPSG:32635 scene with pre-annotations; omit for tiles only")
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "output" / "upload")
+    parser.add_argument("--only", help="comma-separated tile names, for a dry-run upload of a few tiles")
+    parser.add_argument("--source", default="prediction", help="pack only features of this source; features without one count as predictions (use reference for a dry run of the examples)")
     args = parser.parse_args()
     started = time.perf_counter()
     tiles = load_tiles(args.data_dir)
-    features = json.loads(args.scene.read_text(encoding="utf-8"))["features"] if args.scene else []
+    if args.only:
+        wanted = set(args.only.split(","))
+        tiles = [tile for tile in tiles if tile.name in wanted]
+        if len(tiles) != len(wanted):
+            raise SystemExit(f"unknown tiles: {sorted(wanted - {tile.name for tile in tiles})}")
+    features = [feature for feature in json.loads(args.scene.read_text(encoding="utf-8"))["features"]
+                if feature.get("properties", {}).get("source", "prediction") == args.source] if args.scene else []
     fragments = image_elements(features, tiles)
     groups = _groups(tiles, fragments)
     args.output_dir.mkdir(parents=True, exist_ok=True)

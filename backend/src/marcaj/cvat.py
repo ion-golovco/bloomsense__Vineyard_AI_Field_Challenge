@@ -14,6 +14,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge
 
 from marcaj.routing import load_constraints
+from marcaj.scene import DEFAULT_SCENE, PREDICTION
 from marcaj.tiles import CRS, DATA_DIR, TILE_PX, Tile, load_tiles
 
 SHAPE_TAGS = {"vineyard": "polygon", "waste": "box", "row": "polyline", "interrow_area": "polygon"}
@@ -72,7 +73,7 @@ def _annotations_xml(path: Path) -> bytes:
         return archive.read(next(name for name in archive.namelist() if name.endswith("annotations.xml")))
 
 
-def read_cvat(data: bytes, tiles: dict[str, Tile]) -> list[dict[str, Any]]:
+def read_cvat(data: bytes, tiles: dict[str, Tile], source: str = "reference") -> list[dict[str, Any]]:
     features = []
     for image in ET.fromstring(data).iter("image"):
         name = Path(image.get("name", "")).name
@@ -86,7 +87,7 @@ def read_cvat(data: bytes, tiles: dict[str, Tile]) -> list[dict[str, Any]]:
             features.append({
                 "type": "Feature",
                 "geometry": mapping(geometry),
-                "properties": {"label": label, "tile": name, **attributes},
+                "properties": {"label": label, "tile": name, "source": source, **attributes},
             })
     return features
 
@@ -194,19 +195,28 @@ def check_cvat(data: bytes, expected_names: set[str]) -> list[str]:
     return problems
 
 
+def build_scene(cvat_paths: list[Path], predictions: list[dict[str, Any]], data_dir: Path = DATA_DIR, tiles: list[Tile] | None = None) -> dict[str, Any]:
+    tiles = tiles or load_tiles(data_dir)
+    by_name = {tile.name: tile for tile in tiles}
+    features = [feature for path in cvat_paths for feature in read_cvat(_annotations_xml(path), by_name)]
+    features.extend({**feature, "properties": {**feature["properties"], "source": PREDICTION}} for feature in predictions)
+    features.extend(load_constraints(data_dir / "02_route"))
+    features.extend({"type": "Feature", "geometry": mapping(tile.bounds), "properties": {"label": "tile", "tile": tile.name, "source": "organizer"}} for tile in tiles)
+    return {"type": "FeatureCollection", "crs": CRS, "source": ", ".join(path.name for path in cvat_paths) + (" + predictions" if predictions else ""), "features": features}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build an EPSG:32635 scene from CVAT 1.1 annotations (Marcaj export or examples)")
-    parser.add_argument("--cvat", type=Path, action="append", required=True, help="annotations.xml or a ZIP containing it")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cvat", type=Path, action="append", default=[], help="annotations.xml or a ZIP containing it: the Marcaj export or the organizer examples")
+    parser.add_argument("--predictions", type=Path, action="append", default=[], help="EPSG:32635 GeoJSON of model output, shown for review and judging only")
+    parser.add_argument("--output", type=Path, default=DEFAULT_SCENE)
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
     args = parser.parse_args()
-    tiles = {tile.name: tile for tile in load_tiles(args.data_dir)}
-    features = [feature for path in args.cvat for feature in read_cvat(_annotations_xml(path), tiles)]
-    features.extend(load_constraints(args.data_dir / "02_route"))
-    scene = {"type": "FeatureCollection", "crs": CRS, "source": ", ".join(path.name for path in args.cvat), "features": features}
+    predictions = [feature for path in args.predictions for feature in json.loads(path.read_text(encoding="utf-8"))["features"]]
+    scene = build_scene(args.cvat, predictions, args.data_dir)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(scene), encoding="utf-8")
-    print(f"Wrote {len(features)} features to {args.output}")
+    print(f"Wrote {len(scene['features'])} features to {args.output}")
 
 
 if __name__ == "__main__":

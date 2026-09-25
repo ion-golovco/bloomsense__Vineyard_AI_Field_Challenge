@@ -146,7 +146,7 @@ The repository already has tile inventory, CVAT conversion/packaging, a projecte
 
 ### 10.1 Internal artifact contracts
 
-- `predictions.json`: projected FeatureCollection using the existing scene labels and global block/row IDs; model-run manifest alongside it records every processed tile, model/weights, confidence and review disposition. This feeds `marcaj-pack`, not the final measurements.
+- `predictions.geojson` (written by `lab.save()`): projected FeatureCollection using the existing scene labels and global block/row IDs; model-run manifest alongside it records every processed tile, model/weights, confidence and review disposition. This feeds `marcaj-pack`, not the final measurements.
 - `scene.json`: projected FeatureCollection reconstructed from the latest Marcaj export, plus organizer route constraints; store its source export hash separately. This is the only annotation snapshot used by final outputs.
 - `inspection_points.geojson`: projected FeatureCollection of app-only points with the fields in Section 12. Stable IDs are derived from corrected object IDs and a spatially rounded anchor; preserve a crosswalk when a correction moves or merges an object.
 - `route_plan.json`: `mode`, corrected-export hash, start, assumptions (`walking_speed_m_s`, stop time, visibility rule), LineString, `length_m`, per-target actual distance/status, per-row covered/uncovered metres and disconnection reasons. The scored route is serialized separately to the strict `route.geojson` contract in Section 5.
@@ -234,6 +234,7 @@ Use clear labels for `model candidate`, `Marcaj reviewed`, `field confirmed`, an
 | Satellite | Real item provenance and dates, cloud/quality mask, interior-pixel count, two-view comparison or explicit ineligible state; no row/plant claim. |
 | Farmer interface | Normal input flow for select block, plan/preview, reachability explanation and POI status; functional and visual checks at 360/768/1280 px. |
 | Reproducibility | Pinned environment, model weight source, full-data command, measured runtime/hardware and validator results in README. |
+| Review loop | `marcaj-judge` / `lab.report()`: the organizer formulas on the reference tiles, plus regressions against the lab verdicts in `data/review/verdicts.json`. Verdicts are evaluation evidence only and never enter predictions or the upload. |
 
 Do not treat static code, a synthetic scene, or the two organizer examples as proof of hidden-set accuracy or a completed 311-tile run. Record actual pass/fail results as work progresses.
 

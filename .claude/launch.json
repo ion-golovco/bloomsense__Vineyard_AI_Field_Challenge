@@ -1,0 +1,55 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "marcaj-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "--directory",
+        "backend",
+        "run",
+        "--frozen",
+        "uvicorn",
+        "marcaj.api:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--reload"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "marcaj-web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "web",
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "marcaj-lab",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "--directory",
+        "backend",
+        "run",
+        "--frozen",
+        "--group",
+        "lab",
+        "jupyter",
+        "lab",
+        "--no-browser",
+        "--port",
+        "8888",
+        "--ServerApp.root_dir=..",
+        "--IdentityProvider.token=",
+        "--ServerApp.password="
+      ],
+      "port": 8888
+    }
+  ]
+}

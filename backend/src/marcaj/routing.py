@@ -7,6 +7,8 @@ from typing import Any
 from shapely.geometry import LineString, Point, shape
 from shapely.ops import unary_union
 
+from marcaj.scene import is_scored
+
 START_TOLERANCE_M = 5.0
 VISIT_RADIUS_M = 2.0
 MAX_OUTSIDE_SHARE = 0.02
@@ -21,12 +23,12 @@ def load_constraints(route_dir: Path) -> list[dict[str, Any]]:
         if not crs.endswith("32635"):
             raise ValueError(f"{filename}: CRS {crs!r} is not EPSG:32635")
         for feature in collection["features"]:
-            features.append({"type": "Feature", "geometry": feature["geometry"], "properties": {"label": label}})
+            features.append({"type": "Feature", "geometry": feature["geometry"], "properties": {"label": label, "source": "organizer"}})
     return features
 
 
 def _geometries(features: list[dict[str, Any]], *labels: str) -> list:
-    return [shape(feature["geometry"]) for feature in features if feature.get("properties", {}).get("label") in labels]
+    return [shape(feature["geometry"]) for feature in features if feature.get("properties", {}).get("label") in labels and is_scored(feature)]
 
 
 def passable_space(features: list[dict[str, Any]]):

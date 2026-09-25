@@ -1,8 +1,9 @@
-"""Read projected scene artifacts and prepare measured browser data."""
+"""Read the projected scene and prepare measured browser data."""
 
 import json
 import os
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -10,17 +11,27 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from marcaj.demo import build_demo_scene
+from marcaj.tiles import REPO_ROOT
 
+DEFAULT_SCENE = REPO_ROOT / "data" / "generated" / "scene.json"
+PREDICTION = "prediction"
 _TO_DISPLAY = Transformer.from_crs("EPSG:32635", "EPSG:4326", always_xy=True)
 
 
+def scene_path() -> Path:
+    return Path(os.environ.get("MARCAJ_SCENE_PATH", DEFAULT_SCENE)).expanduser()
+
+
 def load_projected_scene() -> dict[str, Any]:
-    configured_path = os.environ.get("MARCAJ_SCENE_PATH")
-    if not configured_path:
-        return build_demo_scene()
-    path = Path(configured_path).expanduser()
-    with path.open(encoding="utf-8") as source:
+    path = scene_path()
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} does not exist; build it with marcaj-scene (see README)")
+    return _read_scene(str(path), path.stat().st_mtime)
+
+
+@lru_cache(maxsize=2)
+def _read_scene(path: str, modified: float) -> dict[str, Any]:
+    with open(path, encoding="utf-8") as source:
         scene = json.load(source)
     if not isinstance(scene, dict) or scene.get("crs") != "EPSG:32635":
         raise ValueError(f"{path} must be a projected EPSG:32635 scene")
@@ -29,12 +40,17 @@ def load_projected_scene() -> dict[str, Any]:
     return scene
 
 
+def is_scored(feature: dict[str, Any]) -> bool:
+    """Model predictions are for review and judging only; everything else is the annotated world."""
+    return feature.get("properties", {}).get("source") != PREDICTION
+
+
 def _features_with_label(scene: dict[str, Any], label: str) -> list[dict[str, Any]]:
-    return [feature for feature in scene["features"] if feature.get("properties", {}).get("label") == label]
+    return [feature for feature in scene["features"] if feature.get("properties", {}).get("label") == label and is_scored(feature)]
 
 
 def measurement_rows(scene: dict[str, Any]) -> list[dict[str, Any]]:
-    features = scene["features"]
+    features = [feature for feature in scene["features"] if is_scored(feature)]
     vineyard_ids = sorted({
         feature.get("properties", {}).get("vineyard_id")
         for feature in features
@@ -90,14 +106,11 @@ def browser_scene(scene: dict[str, Any]) -> dict[str, Any]:
     rows = measurement_rows(scene)
     totals = rows[0]
     routes = _features_with_label(scene, "route")
-    display_features = []
-    for feature in scene["features"]:
-        projected = shape(feature["geometry"])
-        display_features.append({
-            "type": "Feature",
-            "geometry": mapping(transform(_TO_DISPLAY.transform, projected)),
-            "properties": feature["properties"],
-        })
+    display_features = [{
+        "type": "Feature",
+        "geometry": mapping(transform(_TO_DISPLAY.transform, shape(feature["geometry"]))),
+        "properties": feature["properties"],
+    } for feature in scene["features"] if feature["properties"].get("label") != "tile"]
     return {
         "source": scene.get("source", "generated scene"),
         "crs": "EPSG:4326",
