@@ -32,3 +32,9 @@ lab = [
     "ipywidgets>=8.1,<9",
     "jupyterlab>=4.2,<5",
 ]
+sam = [
+    "pillow>=12.3.0",
+    "torch>=2.5.1",
+    "torchvision>=0.29.0",
+    "transformers>=4.56",
+]

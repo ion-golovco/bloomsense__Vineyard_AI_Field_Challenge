@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#24221f" />
+  <title>Inspection map concepts · Agrocontrol by BloomSense</title>
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/mockups/vendor/leaflet.css" />
+  <link rel="stylesheet" href="/mockups/inspection.css" />
+</head>
+<body data-view="focus">
+  <div class="app">
+    <div id="map" role="application" aria-label="OpenStreetMap with selected candidate vineyard field"></div>
+    <aside class="nav-rail" aria-label="BloomSense dashboard menu">
+      <div class="nav-brand">
+        <img src="/mockups/assets/logo-white.svg" alt="" width="39" height="39" />
+        <span><strong>Agrocontrol</strong><small>by BloomSense</small></span>
+      </div>
+      <nav aria-label="Dashboard sections">
+        <button type="button" title="Dashboard"><b aria-hidden="true">▦</b><span>Dashboard</span></button>
+        <button type="button" title="Fields"><b aria-hidden="true">▧</b><span>Fields</span></button>
+        <button type="button" class="active" aria-current="page" title="Inspection"><b aria-hidden="true">◎</b><span>Inspection</span></button>
+        <button type="button" title="Yield"><b aria-hidden="true">⌁</b><span>Yield</span></button>
+      </nav>
+      <div class="nav-bottom"><span class="avatar" aria-hidden="true">BS</span><span>Farm workspace</span></div>
+    </aside>
+
+    <div class="mockup-banner"><span class="live-dot" aria-hidden="true"></span><strong>Design mockup</strong><span>Model field outlines · stops, route and savings illustrative</span></div>
+
+    <div class="view-switch" role="group" aria-label="Choose design concept">
+      <button type="button" data-view-button="focus" aria-pressed="true">A · Focus map</button>
+      <button type="button" data-view-button="studio" aria-pressed="false">B · Field studio</button>
+    </div>
+
+    <section class="field-control floating" aria-label="Select field">
+      <div class="field-label"><span class="section-kicker">VINEYARD / INSPECTION</span><strong>Choose a field</strong></div>
+      <div class="field-input-row">
+        <label class="sr-only" for="field-select">Field</label>
+        <select id="field-select"><option>Loading fields…</option></select>
+        <button id="fit-field" type="button" title="Fit selected field" aria-label="Fit selected field">⌗</button>
+      </div>
+      <p id="field-meta">Loading candidate field boundaries…</p>
+    </section>
+
+    <section class="impact floating" aria-label="Inspection impact sample">
+      <div class="impact-head"><span class="section-kicker">POTENTIAL IMPACT</span><span class="example-badge">EXAMPLE</span></div>
+      <div class="money-row"><div><span>Labour saved</span><strong>195 <small>MDL</small></strong></div><span class="trend" aria-hidden="true">↘</span></div>
+      <div class="impact-grid">
+        <div><span>Time saved</span><strong>2 h 10 min</strong></div>
+        <div><span>Route</span><strong>1.6 km</strong></div>
+      </div>
+      <p>Illustrative comparison: 3 h 40 min usual versus 1 h 30 min planned at 90 MDL/hour.</p>
+    </section>
+
+    <section class="plan floating" aria-labelledby="plan-title">
+      <div class="panel-title"><div><span class="section-kicker">FIELD PLAN</span><h1 id="plan-title">Inspect only what matters</h1></div><span class="step-count">03</span></div>
+      <p class="panel-lead">A short walk between the places that need a closer look.</p>
+      <div class="plan-tabs" role="group" aria-label="Plan views">
+        <button class="selected" type="button" data-panel="stops">Visit points</button>
+        <button type="button" data-panel="evidence">Evidence</button>
+      </div>
+      <div id="stops-panel">
+        <div class="stop-list">
+          <button type="button" data-stop="0"><i>1</i><span><strong>Check canopy gap</strong><small>Illustrative stop</small></span></button>
+          <button type="button" data-stop="1"><i>2</i><span><strong>Review weak growth</strong><small>Illustrative stop</small></span></button>
+          <button type="button" data-stop="2"><i>3</i><span><strong>Inspect visible object</strong><small>Illustrative stop</small></span></button>
+        </div>
+        <div class="plan-action"><span>Illustrative route</span><button id="route-toggle" type="button" aria-pressed="true">Shown <span aria-hidden="true">↗</span></button></div>
+      </div>
+      <div id="evidence-panel" hidden>
+        <div class="evidence-state"><strong>Visit decision pending</strong><p>No dated NDVI/NDMI comparison or previous inspection notes are in this scene. Treatment advice stays unavailable.</p></div>
+        <div class="evidence-item"><span>NDVI / NDMI</span><strong>Awaiting comparable images</strong></div>
+        <div class="evidence-item"><span>Prior notes</span><strong>Not available</strong></div>
+      </div>
+      <div class="visit-decision"><span class="section-kicker">VISIT DECISION</span><strong>Evidence pending</strong><p>Recent NDVI/NDMI and previous field notes are needed before advising for or against a visit.</p></div>
+    </section>
+
+    <div class="map-tools floating" role="group" aria-label="Map controls">
+      <button id="toggle-fields" type="button" aria-pressed="true" title="Show candidate fields">▣ <span>Fields</span></button>
+      <button id="toggle-route" type="button" aria-pressed="true" title="Show illustrative route">⌁ <span>Route</span></button>
+    </div>
+
+    <div class="map-key floating" aria-label="Map legend">
+      <span><i class="key-field"></i>Selected field</span>
+      <span><i class="key-route"></i>Sample route</span>
+      <span><i class="key-stop"></i>Sample stop</span>
+      <span class="key-credit"><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a></span>
+    </div>
+  </div>
+  <script src="/mockups/vendor/leaflet.js"></script>
+  <script src="/mockups/inspection.js"></script>
+</body>
+</html>

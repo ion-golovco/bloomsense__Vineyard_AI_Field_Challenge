@@ -66,7 +66,7 @@ Two separate front ends, one Python package.
 Run from `backend/`:
 
 ```sh
-uv sync --frozen                                           # add --group lab for Jupyter
+uv sync --frozen                                           # add --group lab for Jupyter, --group sam for torch/SAM 2.1 (--inexact keeps other groups)
 uv run --frozen marcaj-scene --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip [--predictions P.geojson]
 uv run --frozen marcaj-judge                               # score predictions in data/generated/scene.json
 uv run --frozen marcaj-pack --scene ../data/generated/predictions.geojson    # dry run: --scene ../data/generated/scene.json --source reference --only a.tif,b.tif

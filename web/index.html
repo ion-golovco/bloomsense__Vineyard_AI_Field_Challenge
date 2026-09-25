@@ -3,102 +3,102 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f8f3" />
+    <meta name="theme-color" content="#24221f" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Inspection planner · Agrocontrol by BloomSense</title>
+    <title>Inspection map · Agrocontrol by BloomSense</title>
   </head>
   <body>
-    <div class="app-shell">
-      <header class="site-header">
-        <div class="header-inner">
-          <div class="brand-lockup">
-            <img src="/bloomsense-logo.svg" alt="" width="39" height="39" />
-            <div><strong>Agrocontrol</strong><span>by BloomSense</span></div>
-          </div>
-          <span class="header-label">Vineyard inspection planner</span>
+    <div class="app">
+      <div id="map" role="application" aria-label="Map of the selected vineyard field"></div>
+
+      <aside class="nav-rail" aria-label="Inspection navigation">
+        <div class="nav-brand">
+          <img src="/bloomsense-logo-white.svg" alt="" width="39" height="39" />
+          <span><strong>Agrocontrol</strong><small>by BloomSense</small></span>
         </div>
-      </header>
+        <nav aria-label="Sections">
+          <button type="button" data-nav="map" aria-current="page" title="Map"><b aria-hidden="true">▦</b><span>Map</span></button>
+          <button type="button" data-nav="fields" title="Fields"><b aria-hidden="true">▧</b><span>Fields</span></button>
+          <button type="button" data-nav="visits" title="Visit points"><b aria-hidden="true">◎</b><span>Visits</span></button>
+          <button type="button" data-nav="impact" title="Savings"><b aria-hidden="true">↘</b><span>Savings</span></button>
+        </nav>
+        <span class="nav-foot">FIELD VIEW</span>
+      </aside>
 
-      <main class="page-content">
-        <div class="page-heading">
-          <div>
-            <p class="eyebrow">FIELD OPERATIONS</p>
-            <h1>Know where to go. Know what you save.</h1>
-            <p id="status" role="status" aria-live="polite">Loading the latest field scene…</p>
-          </div>
-          <span id="source-badge" class="source-badge">Loading</span>
+      <p id="status" class="scene-banner" role="status" aria-live="polite">Loading the current field scene…</p>
+
+      <section class="field-control floating" aria-labelledby="field-heading">
+        <div class="field-label"><span class="section-kicker">VINEYARD / INSPECTION</span><h1 id="field-heading">Choose a field</h1></div>
+        <div class="field-input-row">
+          <label class="sr-only" for="field-select">Field</label>
+          <select id="field-select" disabled><option>Loading fields…</option></select>
+          <button id="fit-field" type="button" aria-label="Fit selected field" title="Fit selected field">⌗</button>
         </div>
+        <p id="field-meta">Loading field boundaries…</p>
+      </section>
 
-        <section class="impact-grid" aria-label="Inspection impact">
-          <article class="impact-card impact-money">
-            <div class="impact-top"><span class="impact-icon" aria-hidden="true">↘</span><span>01 / MONEY</span></div>
-            <p class="impact-label">Estimated labour savings</p>
-            <p id="money-saved" class="impact-number" aria-live="polite">—</p>
-            <p id="money-detail" class="impact-note">Add your usual inspection time and labour cost to estimate this.</p>
-          </article>
-          <article class="impact-card">
-            <div class="impact-top"><span class="impact-icon" aria-hidden="true">◷</span><span>02 / TIME</span></div>
-            <p class="impact-label">Estimated time saved</p>
-            <p id="time-saved" class="impact-number" aria-live="polite">—</p>
-            <p id="time-detail" class="impact-note">Compared with your usual inspection of the same area.</p>
-          </article>
-          <article class="impact-card impact-route">
-            <div class="impact-top"><span class="impact-icon" aria-hidden="true">⌁</span><span>03 / THE PLAN</span></div>
-            <p class="impact-label">Planned inspection route</p>
-            <p id="route-distance" class="impact-number">—</p>
-            <p id="route-detail" class="impact-note">Waiting for a route from the field analysis.</p>
-          </article>
-        </section>
-
+      <section class="impact floating" aria-labelledby="impact-heading">
+        <div class="impact-head"><span class="section-kicker" id="impact-heading">INSPECTION IMPACT</span><span id="impact-state" class="state-badge">PENDING</span></div>
+        <div class="money-row"><div><span>Estimated labour saved</span><strong id="money-saved" aria-live="polite">—</strong></div><span class="trend" aria-hidden="true">↘</span></div>
+        <div class="impact-grid">
+          <div><span>Time saved</span><strong id="time-saved" aria-live="polite">—</strong></div>
+          <div><span>Field route</span><strong id="route-distance">—</strong></div>
+        </div>
+        <p id="impact-detail">Waiting for a route assigned to this field.</p>
         <details class="assumptions" id="assumptions">
-          <summary>Calculate with your own costs <span aria-hidden="true">⌄</span></summary>
+          <summary>Calculate with your costs <span aria-hidden="true">⌄</span></summary>
           <div class="assumptions-body">
-            <label>Usual inspection time <span>minutes</span><input id="usual-minutes" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 120" /></label>
+            <label>Usual inspection <span>minutes</span><input id="usual-minutes" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 120" /></label>
             <label>Labour cost <span>MDL / hour</span><input id="hourly-cost" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 90" /></label>
             <label>Walking speed <span>km / hour</span><input id="walking-speed" type="number" inputmode="decimal" min="0.1" step="0.1" value="4" /></label>
             <label>Time at each stop <span>minutes</span><input id="stop-minutes" type="number" inputmode="decimal" min="0" step="1" value="3" /></label>
-            <p>Estimate = usual inspection time − (route distance ÷ walking speed + time at stops). Labour savings use that time difference × your hourly cost. Enter a usual time for the same area and visit scope. No savings are claimed until a route is available.</p>
+            <p>Estimate = your usual time for this field − planned walking and stop time. Labour value uses your hourly cost. Route validity and coverage are separate checks.</p>
           </div>
         </details>
+      </section>
 
-        <div class="workspace-grid">
-          <section class="panel map-panel" aria-labelledby="map-heading">
-            <div class="panel-heading">
-              <div><p class="eyebrow">FIELD VIEW</p><h2 id="map-heading">Inspection map</h2></div>
-              <button id="fit-map" type="button" class="quiet-button">Fit field</button>
-            </div>
-            <div class="map-toolbar" aria-label="Map layers">
-              <button class="layer-button is-active" type="button" data-layer="block" aria-pressed="true">Blocks</button>
-              <button class="layer-button is-active" type="button" data-layer="route" aria-pressed="true">Route & points</button>
-              <button class="layer-button" type="button" data-layer="row" aria-pressed="false">Rows</button>
-              <button class="layer-button" type="button" data-layer="vineyard" aria-pressed="false">Canopies</button>
-              <button class="layer-button" type="button" data-layer="interrow_area" aria-pressed="false">Inter-rows</button>
-              <button class="layer-button" type="button" data-layer="organizer" aria-pressed="false">Access</button>
-            </div>
-            <div id="map" role="application" aria-label="Interactive vineyard map showing blocks, inspection points and route"></div>
-            <div class="map-footer"><span><i class="legend-swatch block-swatch"></i>Vineyard block</span><span><i class="legend-swatch route-swatch"></i>Inspection route</span><span><i class="legend-swatch point-swatch"></i>Point to visit</span></div>
-          </section>
-
-          <aside class="side-stack">
-            <section class="panel plan-panel" aria-labelledby="plan-heading">
-              <div class="panel-heading"><div><p class="eyebrow">VISIT POINTS</p><h2 id="plan-heading">Where to inspect</h2></div><span id="target-count" class="count-pill">—</span></div>
-              <p id="plan-summary" class="panel-intro">Loading visit points and route…</p>
-              <div id="poi-list" class="poi-list"></div>
-            </section>
-            <section class="panel decision-panel" aria-labelledby="decision-heading">
-              <div class="panel-heading"><div><p class="eyebrow">GO / NO-GO</p><h2 id="decision-heading">Is a visit needed?</h2></div></div>
-              <div class="decision-state"><span class="decision-mark" aria-hidden="true">?</span><div><strong id="decision-title">Insufficient evidence</strong><p id="decision-copy">A visit recommendation needs recent, comparable field evidence.</p></div></div>
-              <div class="evidence-list">
-                <div><span>NDVI / NDMI</span><strong id="satellite-evidence">No dated comparison available</strong></div>
-                <div><span>Previous inspections</span><strong id="notes-evidence">No notes available</strong></div>
-                <div><span>Treatment advice</span><strong id="treatment-evidence">Awaiting field evidence</strong></div>
-              </div>
-              <p class="evidence-footnote">Satellite signals describe a lot, not an individual vine. Treatment decisions need a confirmed field observation.</p>
-            </section>
-          </aside>
+      <section class="plan floating" id="plan-panel" tabindex="-1" aria-labelledby="plan-title">
+        <div class="panel-title"><div><span class="section-kicker">FIELD PLAN</span><h2 id="plan-title">Where to inspect</h2></div><span id="target-count" class="step-count">—</span></div>
+        <p id="plan-summary" class="panel-lead">Loading visit points…</p>
+        <div class="plan-tabs" role="group" aria-label="Plan views">
+          <button id="visits-tab" class="selected" type="button" data-panel="stops" aria-pressed="true">Visit points</button>
+          <button type="button" data-panel="evidence" aria-pressed="false">Evidence</button>
         </div>
-        <p class="data-footnote">Map geometry and route come from the current scene. Predicted features are marked as candidates; they are not confirmed field findings.</p>
-      </main>
+        <div id="stops-panel">
+          <div id="stop-list" class="stop-list"></div>
+          <div class="plan-action"><span id="route-status">Route pending</span><button id="route-toggle" type="button" aria-pressed="true">Show route <span aria-hidden="true">↗</span></button></div>
+        </div>
+        <div id="evidence-panel" hidden>
+          <div class="evidence-state"><strong>Insufficient evidence</strong><p>A visit recommendation needs dated, comparable satellite observations and previous field notes.</p></div>
+          <div class="evidence-item"><span>NDVI / NDMI</span><strong>Not available</strong></div>
+          <div class="evidence-item"><span>Prior notes</span><strong>Not available</strong></div>
+          <div class="evidence-item"><span>Treatment advice</span><strong>Needs field confirmation</strong></div>
+        </div>
+      </section>
+
+      <div class="map-tools floating" role="group" aria-label="Map controls">
+        <button type="button" data-base="street" aria-pressed="true" aria-label="Street map" title="Street map">▦ <span>Street</span></button>
+        <button type="button" data-base="drone" aria-pressed="false" aria-label="Drone image" title="Drone image">◈ <span>Drone</span></button>
+        <details class="layers-menu" id="layers-menu">
+          <summary title="Map layers" aria-label="Map layers">▤ <span>Layers</span></summary>
+          <div>
+            <label><input type="checkbox" data-layer="field" checked /> Field boundary</label>
+            <label><input type="checkbox" data-layer="route" checked /> Route</label>
+            <label><input type="checkbox" data-layer="points" checked /> Visit points</label>
+            <label><input type="checkbox" data-layer="row" /> Vine rows</label>
+            <label><input type="checkbox" data-layer="vineyard" /> Canopies</label>
+            <label><input type="checkbox" data-layer="interrow_area" /> Inter-rows</label>
+            <label><input type="checkbox" data-layer="access" /> Access areas</label>
+          </div>
+        </details>
+      </div>
+
+      <div class="map-key floating" aria-label="Map legend">
+        <span><i class="key-field" aria-hidden="true"></i>Selected field</span>
+        <span><i class="key-route" aria-hidden="true"></i>Inspection route</span>
+        <span><i class="key-stop" aria-hidden="true"></i>Visit point</span>
+        <span class="key-credit"><a id="map-credit" href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a></span>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
