@@ -34,6 +34,18 @@ The lab outlines (35 `vineyard`, 7 `overgrown`, 7 `orchard`) are evaluation evid
 | Row spacing per plot is 2.00–3.15 m. Neighbouring plots differ in angle (for example 51° strips beside 127° blocks) | same fit |
 | **Canopy colour:** ExG > 0.110 is the best canopy threshold on both reference tiles (AUC 0.966 / 0.942), but pixel IoU is only 0.57 / 0.47, so canopies need shape and row constraints beyond colour | organizer canopies at 0.025 m |
 
+### Plots, rows and inter-rows (26 September)
+
+| Finding | Evidence |
+|---|---|
+| **Plots** (`marcaj.plots`, frozen): north F1 0.59 at IoU 0.5, 0.44 at 0.75, median best IoU 0.64, area IoU 0.79. South 0.47 / 0.12 / 0.52 / 0.55. The south was inspected during development, so it is a validation area, not a clean test. The old window mask scored 0.56 / 0.36 / 0.59 / 0.74 and 0.43 / 0.21 / 0.43 / 0.60 | `judge.plot_scores` against the 35 outlines, split at northing 5,219,600 |
+| Tried and dropped: growing seeds into weaker evidence of the same direction (false area doubled), and walking rows outward by contrast (stopped at internal dips and kept 35 of about 54 rows) | same scorer, north half |
+| **Row axes from the lattice are exact where the plot is found:** axis F1 0.909 and 0.980 on the reference tiles, 53 rows against 51, row length 2,043 m against 1,942 m. Angle within 0.1°, lateral error at mid-row a median 0.04–0.06 m | `judge` on the two reference tiles, a sanity check and not a holdout |
+| **Inter-rows** as the band between neighbouring axes inset 0.35 m (reference inter-rows stop a median 0.30–0.38 m from the axis and never touch canopy): inter-row F1 0.800 and 0.958, area 3,703 m² against 4,064 m². Attributes 0.850 with `disrupted` at a green gap of at least 5 m in a ±0.3 m tube and cover from the ExG > 0.11 share | same |
+| **Canopy is limited by rows, not colour:** within ±0.3 m of the reference row axes ExG reaches pixel IoU 0.69 / 0.80, against 0.49 / 0.44 over the whole tile. All reference canopy lies inside that tube | reference canopies, 0.025 m |
+| **Canopy** (`marcaj.canopy`, `research/probes/canopy_probe.py`): judge canopy score 0.668 (union IoU 0.664, instance F1 0.674), 634 against 650 canopies, 534 m² against 536 m². Predicted rows as given 0.605; with the reference rows 0.728 (diagnostic), so row error costs about 0.06. The best ExG threshold pulls in opposite directions on the two tiles (0.14 and 0.08) and Otsu is worse (0.553), so colour tuning is exhausted; the defaults were set with these tiles in view | the two reference tiles, a sanity check and not a holdout |
+| Model licences: SegFormer MiT weights are non-commercial (NVIDIA licence); `segmentation_models.pytorch` U-Net (MIT) and DINOv2 (Apache-2.0) are permissive. RoWeeder trained SegFormer-B0 on Hough-row pseudo-labels and beat its own labels (F1 74.3 against 63.0) | web research agent, sources opened |
+
 ### Sentinel-2 over Sireț, 2025
 
 Earth Search `sentinel-2-c1-l2a` has 72 scenes under 40% cloud from March to October. They are on MGRS 35TPN in EPSG:32635, the drone CRS. Reflectance = DN × 1e-4 − 0.1; ignoring the offset biases NDVI. The probe read 13 clear dates at 12-day spacing, 49 s over HTTP. "Vineyard" = the detected plots shrunk by 5 m (`research/probes/sentinel_ndvi.py`) (752 px of 10 m). "Other" = study-area land more than 15 m from any plot (5,917 px).

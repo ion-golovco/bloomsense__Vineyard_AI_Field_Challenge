@@ -39,7 +39,10 @@ Two separate front ends, one Python package.
 | `package` | Upload ZIPs regrouped under 88,000,000 bytes and re-verified. It packs `source=prediction` features only by default; `--source reference --only …` gives the example dry run. `marcaj-pack` |
 | `mosaic` | Preprocessing: one seamless 0.2 m/px GeoTIFF of the 311 verified tiles, area-averaged, cached at `data/generated/mosaic_20cm.tif` (11 s) |
 | `layers` | Plot variables on a 0.4 m grid: vine-over-orchard row energy, orchard energy, row angle, green share. Cached at `data/generated/layers_40cm.npz` (17 s) |
-| `vineyard_mask` | Training-free vineyard plots from row periodicity. Window scores are cached in `data/generated/window_scores.npz`, so a re-threshold takes about 0.02 s |
+| `plots` | Training-free plots and row axes: seeds from `layers`, split by row direction, per-plot row lattice (angle, spacing, axes), quadrilateral fit, road rule; global `vineyard_id` and `row_id` (18 s) |
+| `rows` | Inter-row polygons between neighbouring axes (inset 0.35 m), and per-tile `row_structure` / `interrow_cover` from native pixels (16 s, all tiles) |
+| `canopy` | Canopy polygons at native 0.025 m: ExG > 0.11 inside a ±0.3 m tube of each re-fitted row axis, split at necks, ≥ 0.2 m² (67 s, all tiles) |
+| `predict` | The whole prediction to `data/generated/predictions.geojson`: `uv run --frozen python -m marcaj.predict` (96 s) |
 | `judge` | The organizer formulas on the reference tiles, plus regressions against verdicts; `marcaj-judge` |
 | `review` | Verdict store at `data/review/verdicts.json` (tracked) |
 | `routing` | Organizer constraints, passable space, `check_route` |

@@ -7,11 +7,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from shapely import STRtree, make_valid
+from shapely import STRtree, make_valid, set_precision
 from shapely.errors import GEOSException
 from shapely.geometry import LineString, Polygon, box, mapping, shape
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import linemerge
+from shapely.ops import linemerge, unary_union
 
 from marcaj.routing import load_constraints
 from marcaj.scene import DEFAULT_SCENE, PREDICTION
@@ -92,6 +92,17 @@ def read_cvat(data: bytes, tiles: dict[str, Tile], source: str = "reference") ->
     return features
 
 
+def _snap(polygon: BaseGeometry) -> BaseGeometry:
+    """Snaps to the 0.01 px grid `_format` writes, so rounding never makes a written polygon cross itself.
+    A polygon GEOS cannot snap (a hole outside its shell) is repaired first; CVAT drops holes anyway."""
+    try:
+        return set_precision(polygon, 0.01)
+    except GEOSException:
+        repaired = make_valid(polygon)
+        shells = [Polygon(p.exterior) for p in getattr(repaired, "geoms", [repaired]) if p.geom_type == "Polygon"]
+        return set_precision(unary_union(shells), 0.01) if shells else Polygon()
+
+
 def _pieces(geometry: BaseGeometry, tag: str) -> list[BaseGeometry]:
     parts = list(getattr(geometry, "geoms", [geometry]))
     if tag == "polyline":
@@ -100,7 +111,8 @@ def _pieces(geometry: BaseGeometry, tag: str) -> list[BaseGeometry]:
         return [line for line in getattr(merged, "geoms", [merged]) if line.length >= MIN_LENGTH_PX]
     polygons = [
         polygon for part in parts if part.geom_type in {"Polygon", "MultiPolygon"}
-        for polygon in getattr(part, "geoms", [part]) if polygon.area >= MIN_AREA_PX
+        for snapped in [_snap(part) if tag == "polygon" else part]
+        for polygon in getattr(snapped, "geoms", [snapped]) if polygon.geom_type == "Polygon" and polygon.area >= MIN_AREA_PX
     ]
     if tag == "box":
         return [box(*polygon.bounds) for polygon in polygons]

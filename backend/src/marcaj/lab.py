@@ -10,11 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import ipywidgets as widgets
-import numpy as np
 import uvicorn
 from ipyleaflet import DrawControl, GeoJSON, LayersControl, Map, TileLayer, WidgetControl
 from pyproj import Transformer
-from rasterio.features import geometry_mask
 from shapely.geometry import mapping, shape
 from shapely.ops import transform
 
@@ -22,11 +20,12 @@ from marcaj import review
 from marcaj.cvat import build_scene
 from marcaj.judge import judge, print_report
 from marcaj.scene import DEFAULT_SCENE
-from marcaj.tiles import DATA_DIR, PIXEL_M, REPO_ROOT, TILE_PX, load_tiles
-from marcaj.vineyard_mask import MaskParams, detect_plots, load_scores
+from marcaj.tiles import DATA_DIR, PIXEL_M, TILE_PX, load_tiles
+from marcaj.layers import load_layers
+from marcaj.plots import PlotParams, load_excess
+from marcaj.predict import PREDICTIONS_PATH, predict, write
 
 EXAMPLES = DATA_DIR / "05_examples" / "siret3_examples_cvat.zip"
-PREDICTIONS_PATH = REPO_ROOT / "data" / "generated" / "predictions.geojson"
 GRID_LEFT, GRID_TOP = 628992.0, 5221222.4
 _TO_DISPLAY = Transformer.from_crs("EPSG:32635", "EPSG:4326", always_xy=True)
 _TO_WORLD = Transformer.from_crs("EPSG:4326", "EPSG:32635", always_xy=True)
@@ -68,9 +67,10 @@ class Lab:
         self.base_features = base["features"]
         self.reference = [f for f in self.base_features if f["properties"].get("source") == "reference"]
         self.organizer = [f for f in self.base_features if f["properties"].get("source") == "organizer" and f["properties"]["label"] != "tile"]
-        self.scores = load_scores()
-        self.params = MaskParams()
+        self.layers, self.excess = load_layers(), load_excess()
+        self.params = PlotParams()
         self.predictions: list[dict[str, Any]] = []
+        self.blocks: list[dict[str, Any]] = []
         self.selected: dict[str, Any] | None = None
         self.selected_mark = ""
         self.clicked_tile = ""
@@ -87,13 +87,18 @@ class Lab:
                                        style_callback=lambda f: {"color": colour(f), "weight": 1.5, "fillOpacity": 0.1 if f["properties"]["label"] != "study_area" else 0})
         self.reference_layer = GeoJSON(data=_collection(self.reference), name="reference",
                                        style_callback=lambda f: {"color": colour(f), "weight": 1.2, "fillOpacity": 0.15})
-        self.prediction_layer = GeoJSON(data=_collection([]), name="predictions",
-                                        style={"color": "#E11DFF", "weight": 2.5, "dashArray": "8 5", "fillOpacity": 0.08},
-                                        hover_style={"fillOpacity": 0.25})
-        self.verdict_layer = GeoJSON(data=_collection([]), name="verdicts and plots",
+        self.interrow_layer = GeoJSON(data=_collection([]), name="predicted inter-rows",
+                                      style_callback=lambda f: {"color": "#22D3EE" if f["properties"].get("interrow_cover") == "bare_soil" else "#F59E0B",
+                                                                "weight": 0.5, "fillOpacity": 0.12})
+        self.row_layer = GeoJSON(data=_collection([]), name="predicted rows",
+                                 style_callback=lambda f: {"color": "#FF3B30" if f["properties"].get("row_structure") == "regular" else "#E11DFF", "weight": 1.2})
+        self.prediction_layer = GeoJSON(data=_collection([]), name="predicted plots",
+                                        style={"color": "#E11DFF", "weight": 2.5, "dashArray": "8 5", "fillOpacity": 0.0},
+                                        hover_style={"fillOpacity": 0.15})
+        self.verdict_layer = GeoJSON(data=_collection([]), name="your outlines and verdicts",
                                      style_callback=lambda f: {"color": _VERDICT_COLOURS.get(f["properties"]["verdict"], "#FFFFFF"), "weight": 3, "fillOpacity": 0.2},
                                      point_style={"radius": 6, "fillOpacity": 1, "weight": 2})
-        for layer in (self.organizer_layer, self.reference_layer, self.prediction_layer, self.verdict_layer):
+        for layer in (self.organizer_layer, self.reference_layer, self.interrow_layer, self.row_layer, self.prediction_layer, self.verdict_layer):
             self.map.add(layer)
         self.prediction_layer.on_click(self._select_prediction)
         self.verdict_layer.on_click(self._select_mark)
@@ -129,14 +134,20 @@ class Lab:
     def show(self) -> Map:
         return self.map
 
-    def run(self, params: MaskParams | None = None, **changes: Any) -> None:
-        """Re-detect plots with new thresholds, e.g. lab.run(vine_min=40, opening=0); window scores are cached."""
-        self.params = MaskParams(**{**asdict(params or self.params), **changes})
-        self.predictions = detect_plots(self.scores, self.params)
-        self.prediction_layer.data = _collection(self.predictions)
+    def run(self, params: PlotParams | None = None, **changes: Any) -> None:
+        """Re-runs the prediction (plots, rows, inter-rows, attributes; about 35 s), e.g. lab.run(ratio_min=1.5)."""
+        self.params = PlotParams(**{**asdict(params or self.params), **changes})
+        self.predictions = predict(self.params, tiles=self.tiles, layers=self.layers, excess=self.excess)
+        by_label = lambda label: [f for f in self.predictions if f["properties"]["label"] == label]
+        self.blocks = by_label("block")
+        self.prediction_layer.data = _collection(self.blocks)
+        self.row_layer.data = _collection(by_label("row"))
+        self.interrow_layer.data = _collection(by_label("interrow_area"))
         self._refresh_verdicts()
-        total = sum(f["properties"]["area_m2"] for f in self.predictions)
-        self._say(f"{len(self.predictions)} plots, {total / 1e4:.2f} ha with {self.params}")
+        labels = Counter(f["properties"]["label"] for f in self.predictions)
+        total = sum(f["properties"]["area_m2"] for f in self.predictions if f["properties"]["label"] == "block")
+        self._say(f"{labels['block']} plots ({total / 1e4:.2f} ha), {len({f['properties']['row_id'] for f in self.predictions if 'row_id' in f['properties']})} rows, "
+                  f"{labels['interrow_area']} inter-row pieces with {self.params}")
 
     def scene(self) -> dict[str, Any]:
         tagged = [{**f, "properties": {**f["properties"], "source": "prediction"}} for f in self.predictions]
@@ -147,29 +158,10 @@ class Lab:
         print_report(result)
         return result
 
-    def missed_scores(self) -> list[dict[str, Any]]:
-        """Why a drawn miss was not found: the detector's window scores inside it, next to its thresholds."""
-        rows = []
-        for verdict in review.load_verdicts():
-            if verdict["kind"] != "missed" or verdict["label"] != "block" or not shape(verdict["geometry"]).area:
-                continue
-            inside = ~geometry_mask([verdict["geometry"]], out_shape=self.scores.vine.shape, transform=self.scores.transform)
-            if not inside.any():
-                continue
-            vine, orchard = self.scores.vine[inside], self.scores.orchard[inside]
-            rows.append({"id": verdict["id"], "tile": verdict["tile"], "windows": int(inside.sum()),
-                         "vine_median": round(float(np.median(vine)), 1), "orchard_median": round(float(np.median(orchard)), 1),
-                         "share_passing": round(float(((vine > self.params.vine_min) & (vine > self.params.vine_over_orchard * orchard)).mean()), 2)})
-        for row in rows:
-            print(row)
-        print(f"thresholds: vine > {self.params.vine_min} and vine > {self.params.vine_over_orchard} x orchard")
-        return rows
-
     def save(self) -> Path:
         """Writes the predictions and rebuilds the client scene so the Vite app shows this run."""
-        PREDICTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        PREDICTIONS_PATH.write_text(json.dumps({"type": "FeatureCollection", "crs": "EPSG:32635", "features": self.predictions}), encoding="utf-8")
-        DEFAULT_SCENE.write_text(json.dumps({**build_scene([EXAMPLES], self.predictions, tiles=self.tiles), "source": f"examples + {len(self.predictions)} predicted plots"}), encoding="utf-8")
+        write(self.predictions)
+        DEFAULT_SCENE.write_text(json.dumps({**build_scene([EXAMPLES], self.predictions, tiles=self.tiles), "source": f"examples + {len(self.predictions)} predicted objects"}), encoding="utf-8")
         self._say(f"saved {PREDICTIONS_PATH.name} and the client scene")
         return PREDICTIONS_PATH
 
@@ -188,9 +180,10 @@ class Lab:
             self.info.value = f"tile <b>{self.clicked_tile or 'outside the tiles'}</b>" + (f" · plot <b>{self.selected['properties']['vineyard_id']}</b>" if self.selected else "")
 
     def _select_prediction(self, feature: dict[str, Any], **_: Any) -> None:
-        self.selected = self.predictions[feature["properties"]["lab_index"]]
+        self.selected = self.blocks[feature["properties"]["lab_index"]]
         properties = self.selected["properties"]
-        self.info.value = f"plot <b>{properties['vineyard_id']}</b> · {properties['area_m2']} m² · rectangularity {properties['rectangularity']}"
+        details = " · ".join(f"{key} {properties[key]}" for key in ("row_id", "area_m2", "row_angle", "row_spacing_m", "rows", "row_structure", "interrow_cover", "tile") if key in properties)
+        self.info.value = f"{properties['label']} <b>{properties.get('vineyard_id', '')}</b> · {details}"
 
     def _record(self, action) -> None:
         try:
@@ -230,7 +223,12 @@ class Lab:
     def _select_mark(self, feature: dict[str, Any], **_: Any) -> None:
         properties = feature["properties"]
         self.selected_mark = properties["id"]
-        self.info.value = f"selected <b>{properties['kind']} {properties['verdict']}</b> ({properties['id']})"
+        fit = ""
+        if properties["kind"] == "plot":
+            outline = shape(next(v for v in review.load_verdicts() if v["id"] == properties["id"])["geometry"])
+            ious = [outline.intersection(g).area / outline.union(g).area for g in (shape(b["geometry"]) for b in self.blocks) if g.intersects(outline)]
+            fit = f" · best IoU with a predicted plot {max(ious, default=0):.2f}"
+        self.info.value = f"selected <b>{properties['kind']} {properties['verdict']}</b> ({properties['id']}){fit}"
 
     def _delete_mark(self) -> None:
         if not self.selected_mark:
