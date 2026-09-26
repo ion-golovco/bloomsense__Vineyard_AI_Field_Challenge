@@ -40,7 +40,7 @@ h1,h2,p{margin-top:0}.field-label h1{margin:0;font-size:19px;letter-spacing:-.04
 .nav-rail{top:auto;left:8px;right:8px;bottom:8px;width:auto;height:60px;flex-direction:row;padding:5px 8px;border-radius:15px}.nav-brand,.nav-foot{display:none}.nav-rail nav{flex-direction:row;justify-content:space-around;gap:2px}.nav-rail nav button{width:25%;height:48px;flex-direction:column;gap:2px;font-size:10px}.nav-rail nav b{font-size:20px}.nav-rail nav span{display:block;font-size:9px}.nav-rail nav button[aria-current="page"]:before{left:calc(50% - 12px);top:-5px;width:24px;height:3px}
 .scene-banner{top:8px;left:8px;right:8px;max-width:none;padding:7px 9px;font-size:10px}.field-control{top:49px;left:8px;right:8px;width:auto;padding:11px 12px}.field-label h1{font-size:16px}.field-label .section-kicker{display:none}.field-input-row{margin-top:6px;gap:5px}.field-input-row select,.field-input-row button{height:35px;font-size:11px}.field-input-row button{width:35px;font-size:18px}.field-control p{margin-top:5px;font-size:9px}
 .impact{top:163px;right:8px;width:min(206px,56vw);padding:10px 12px;max-height:calc(100dvh - 480px);min-height:118px}.impact .section-kicker{font-size:8px}.state-badge{font-size:8px;padding:2px 5px}.money-row{margin:7px 0}.money-row strong{font-size:26px}.money-row span:not(.trend){font-size:10px}.trend{width:25px;height:25px;font-size:17px}.impact-grid{gap:5px;padding:7px 0}.impact-grid span{font-size:9px}.impact-grid strong{font-size:11px}.impact>p{display:none}.assumptions summary{font-size:9px;padding-top:7px}.assumptions-body{grid-template-columns:1fr 1fr;gap:6px}.assumptions label{font-size:9px}.assumptions input{height:31px;padding:3px 5px;font-size:11px}
-.plan{top:auto;left:8px;right:8px;bottom:76px;width:auto;padding-top:12px;border-radius:16px;max-height:210px}.panel-title{padding:0 13px}.panel-title h2{font-size:16px;margin-top:4px}.panel-lead{padding:0 13px;margin:6px 0 9px;font-size:10px}.step-count{min-width:27px;height:27px;font-size:10px}.plan-tabs{padding:0 13px 7px}.plan-tabs button{font-size:10px;padding:5px 8px}.stop-list{max-height:83px}.stop-list button{padding:7px 11px}.stop-list i{width:20px;height:20px;font-size:9px}.stop-list strong{font-size:10px}.stop-list small{font-size:9px}.empty-state{min-height:64px;padding:5px 15px}.empty-state>span{display:none}.empty-state strong{font-size:10px}.empty-state p{font-size:9px}.plan-action{padding:6px 13px;font-size:9px}.plan-action button{font-size:9px}.evidence-state{margin:8px 13px;padding:8px}.evidence-state p{font-size:10px}.evidence-item{display:none}
+.plan{top:auto;left:8px;right:8px;bottom:76px;width:auto;padding-top:12px;border-radius:16px;max-height:228px}.panel-title{padding:0 13px}.panel-title h2{font-size:16px;margin-top:4px}.panel-lead{padding:0 13px;margin:6px 0 9px;font-size:10px}.step-count{min-width:27px;height:27px;font-size:10px}.plan-tabs{padding:0 13px 7px}.plan-tabs button{font-size:10px;padding:5px 8px}.stop-list{max-height:83px}.stop-list button{padding:7px 11px}.stop-list i{width:20px;height:20px;font-size:9px}.stop-list strong{font-size:10px}.stop-list small{font-size:9px}.empty-state{min-height:64px;padding:5px 15px}.empty-state>span{display:none}.empty-state strong{font-size:10px}.empty-state p{font-size:9px}.plan-action{padding:6px 13px;font-size:9px}.plan-action button{font-size:9px}.evidence-state{margin:8px 13px;padding:8px}.evidence-state p{font-size:10px}.evidence-item{display:none}
 .map-tools{left:8px;right:auto;bottom:auto;top:163px}.map-tools>button,.layers-menu>summary{padding:7px;font-size:10px}.map-tools>button span,.layers-menu>summary span{display:none}.map-key{left:8px;top:323px;bottom:auto;width:96px;display:grid;max-width:none;padding:6px 7px;gap:6px;font-size:8px}.map-key span{gap:3px}.map-key i{width:8px;height:8px}.map-key .key-credit{display:flex;width:100%;overflow-wrap:anywhere;font-size:8px}.leaflet-top.leaflet-left{top:218px;left:8px}.leaflet-control-zoom a{width:25px!important;height:25px!important;line-height:25px!important}.leaflet-bottom.leaflet-right{bottom:70px;right:8px}.leaflet-control-attribution{display:none!important}
 }
 @media(max-height:620px) and (min-width:701px){.plan{top:240px;max-height:calc(100dvh - 285px)}.impact{max-height:calc(100dvh - 90px)}}
@@ -198,3 +198,40 @@ body[data-view="analysis"] .map-tools { display: none; }
 @media(max-width:700px) {
   body[data-view="all-fields"] .layers-menu>div { top: auto; bottom: calc(100% + 12px); left: auto; right: 0; max-height: calc(100dvh - 370px); }
 }
+.route-cutoff{display:flex;align-items:center;gap:5px}.route-cutoff select{font:inherit;color:#465748;background:#fff;border:1px solid #d9ddd3;border-radius:6px;padding:2px 4px}
+.analysis-raster{display:flex;flex-direction:column;gap:9px;margin-top:12px}
+.analysis-date{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;font-weight:750;color:#3b4d34}
+.analysis-date select{flex:1;min-width:0;max-width:200px;height:34px;padding:0 8px;border:1px solid #d9dfd3;border-radius:8px;background:#f7f9f4;color:#21372a;font-weight:700}
+.raster-ramp{display:block;height:10px;border-radius:5px;border:1px solid #d9dfd3}
+.raster-scale{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:10px;color:#657465}
+.analysis-panel .analysis-credit{margin:6px 0 0;font-size:10px;color:#76806f}
+.sentinel-raster{image-rendering:pixelated}
+@media(max-width:700px){
+  .analysis-panel .section-kicker,.analysis-facts{display:none}
+  .analysis-raster{flex-direction:row;align-items:center;gap:10px;margin-top:8px}
+  .analysis-date{flex:none;font-size:10px}.analysis-date select{max-width:140px;height:30px;font-size:10px}
+  .raster-legend{flex:1;min-width:0}.raster-scale{font-size:9px}
+  .analysis-panel .analysis-credit{font-size:9px}
+}
+@media(max-width:700px){
+  .analysis-panel h2{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+  .analysis-panel .analysis-credit{display:none}
+}
+@media(max-width:700px){body[data-view="analysis"] .map-key{top:163px;left:auto;right:8px}}
+@media(min-width:701px){.analysis-panel{max-height:calc(100dvh - 340px)}}
+.route-planner{display:flex;flex-direction:column;gap:7px;padding:11px 18px;border-top:1px solid #e9ece5}.planner-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;color:#334038}.planner-head .route-cutoff{font-size:11px;font-weight:700;color:#647261}
+.planner-point{display:flex;align-items:center;gap:9px;min-width:0}.planner-point>span:nth-child(2){display:flex;flex-direction:column;flex:1;min-width:0}.planner-point small{font-size:10px;color:#69796c}.planner-point strong{font-size:12px;color:#334038;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.planner-point button,.planner-actions>button:not(.primary-button){flex:none;min-height:32px;padding:4px 9px;border:1px solid #d9ddd3;border-radius:8px;background:#fff;color:#633095;font-size:11px;font-weight:800}.planner-point button[aria-pressed="true"]{background:#f3e8ff;border-color:#a132ea}
+.planner-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.planner-actions label{display:flex;align-items:center;gap:5px;flex:1 1 150px;font-size:11px;color:#465748}.planner-actions .primary-button{min-height:32px;padding:6px 12px;font-size:11px}.planner-actions button:disabled{opacity:.48;cursor:not-allowed}
+.planner-status{margin:0;font-size:11px;line-height:1.4;color:#465748}.planner-status:empty{display:none}.planner-status.error{padding:7px 9px;border-radius:8px;background:#fdecea;color:#8a2a22}
+.route-planner #download-route{align-self:flex-start;padding:6px 10px;font-size:11px}
+.point-badge,.planner-marker{display:grid;place-items:center;flex:none;width:26px;height:26px;border:2px solid #fff;border-radius:50%;font-size:11px;font-weight:850;color:#fff;box-shadow:0 0 0 1px #24221f55}
+.point-badge.start,.planner-marker.start{background:#2f7d32}.point-badge.end,.planner-marker.end{background:#24221f}
+.planner-marker{width:28px!important;height:28px!important;cursor:grab}#map.picking,#map.picking .leaflet-interactive{cursor:crosshair}
+@media(max-width:700px){.route-planner{gap:5px;padding:7px 13px}.planner-head{font-size:10px}.planner-point strong{font-size:10px}.planner-point small{font-size:9px}.point-badge{width:20px;height:20px;font-size:9px}.planner-point button,.planner-actions>button:not(.primary-button),.planner-actions .primary-button{min-height:30px;font-size:10px}.planner-actions label{font-size:10px}.planner-status{font-size:10px}}
+@media(min-width:701px){.plan .stop-list{max-height:min(20vh,170px)}}
+/* the plan panel stops above the map key, which sits 68 px (two rows on tablets: 119 px) from the bottom */
+@media(min-width:701px){.plan{max-height:calc(100dvh - 335px)}}
+@media(min-width:701px) and (max-width:1020px){.plan{max-height:calc(100dvh - 385px)}}
+@media(max-height:620px) and (min-width:701px){.plan{max-height:calc(100dvh - 315px)}}
+.key-offroute{background:#fff;border-radius:50%;border:2px dashed #6b7280}.offroute-tip{max-width:260px;white-space:normal}

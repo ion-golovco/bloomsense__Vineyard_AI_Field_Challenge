@@ -1,0 +1,46 @@
+/* Roles, farmer score and point status (inspection.ts); kept apart from style.css */
+.role-switch{display:flex;align-self:flex-start;padding:2px;border:1px solid #d9ddd3;border-radius:9px;background:#f6f7f3}
+.role-switch button{min-height:28px;padding:3px 9px;border:0;border-radius:7px;background:transparent;color:#5d6a5b;font-size:11px;font-weight:750}
+.role-switch button[aria-pressed="true"]{background:#24221f;color:#fff}
+.role-switch button:focus-visible,.status-actions button:focus-visible{outline:2px solid #7e22ce;outline-offset:2px}
+body[data-role="farmer"] [data-nav="all-fields"]{display:none}
+.field-control .field-label .section-kicker{display:none}  /* the role switch takes its place */
+
+.field-score{margin:0 18px 10px;padding:9px 12px;border-radius:11px;background:#f4f6f1;border-left:4px solid #8a948a}
+.field-score[data-band="good"]{border-left-color:#2f7d32}
+.field-score[data-band="fair"]{border-left-color:#b7791f}
+.field-score[data-band="poor"]{border-left-color:#b42318}
+.score-head{display:flex;align-items:baseline;gap:8px}
+.score-head span{font-size:10px;font-weight:800;letter-spacing:.08em;color:#5d6a5b;text-transform:uppercase}
+.score-head strong{font-size:24px;line-height:1;color:#24221f}
+.score-head small{margin-left:auto;font-size:11px;color:#5d6a5b}
+.field-score p{margin:5px 0 0;font-size:11px;line-height:1.35;color:#4f5b4d}
+.field-score p:empty{display:none}
+.field-score .score-error{color:#b42318}
+
+.missing-toggle{display:flex;align-items:center;gap:7px;margin:0 18px 8px;font-size:12px;color:#334038}
+.missing-toggle[hidden]{display:none}
+.stop-item{border-bottom:1px solid #edf0eb}
+.stop-list .stop-item>button{border-bottom:0}
+.point-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 18px 10px 58px}
+.status-chip{padding:3px 8px;border-radius:999px;background:#eef0eb;color:#3f4a3d;font-size:10px;font-weight:800}
+.status-chip.in_progress{background:#fff1d6;color:#7a4b00}
+.status-chip.fixed,.status-chip.false_positive{background:#e7f0ff;color:#1d4f91}
+.status-chip.approved.fixed,.status-chip.approved.false_positive{background:#dff3e0;color:#1f5f24}
+.status-chip.approved.open{background:#fde7e5;color:#912018}
+.status-actions{display:flex;flex-wrap:wrap;gap:5px}
+.stop-list .status-actions button{width:auto;min-height:28px;padding:3px 9px;border:1px solid #d9ddd3;border-radius:7px;background:#fff;color:#633095;font-size:11px;font-weight:750}
+.stop-list .status-actions button:hover{background:#faf5ff}
+
+@media(max-width:700px){
+  /* the switch shares the heading row: the map tools and impact card sit at fixed offsets below the field card */
+  .field-control .field-label{flex-direction:row-reverse;align-items:center;justify-content:space-between;gap:8px}
+  #score-detail{display:none}
+  .role-switch button{min-height:24px;padding:2px 7px;font-size:10px}
+  .field-score{margin:0 13px 6px;padding:5px 9px}
+  .score-head strong{font-size:18px}
+  .field-score p{margin-top:2px;font-size:9px}
+  .point-status{padding:0 11px 7px 42px}
+  .stop-list .status-actions button{min-height:24px;font-size:10px}
+  .missing-toggle{margin:0 13px 6px;font-size:10px}
+}

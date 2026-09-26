@@ -9,7 +9,9 @@ the two organizer tiles and their neighbours. The loss is masked beyond 1.5 m of
 threshold and on green outside the tube (grassed plots put the teacher's tube on inter-rows). Background between two
 plants weighs 6x. Measured on the two organizer tiles (a sanity check, not a holdout; research/notes/canopy_net.md):
 - Network alone: judge canopy 0.843 (union IoU 0.807, F1 0.896), 402 / 256 canopies against 399 / 251.
-- `combine="and", threshold=0.2`: 0.855 (0.821, 0.905), a tie with the rules alone (0.855; 0.822, 0.905).
+- `combine="and", threshold=0.2`: 0.855 (0.821, 0.905), a tie with the rules alone (0.855; 0.822, 0.905). With the
+  recall rules of 26 September (`canopy` weak stretches, per-row young rule): 0.851, rules alone 0.852; thresholds
+  0.05-0.3 give 0.851 (research/probes/canopy_recall_trials.py).
 5 levels, 1,964,546 parameters, 6,000 steps x 16 crops of 256 px in 834 s. Seed spread about 0.003.
 Inference on MPS takes 0.8 s per tile with 4 flips, 0.2 s without; without flips "and" still scores 0.855 and the
 network alone 0.840. The full run over 131 vineyard tiles takes 174 s with flips, 62 s for the rules alone."""

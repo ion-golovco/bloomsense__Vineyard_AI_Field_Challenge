@@ -11,6 +11,8 @@ where canopy is obscured"). `planting` POIs are row ends: the row's own axis run
 its neighbours are planted there (predicted axes run to the plot edge; a reference row stops at its last vine or
 runs to a tile edge, so on a Marcaj export it finds only stretches that run into a tile with no piece of the row). Each POI carries `gap_start` / `gap_end`: the route covers the whole stretch
 when it walks the adjacent inter-row along it (the axis is about 1.25 m from the inter-row centre).
+A gap or planting stretch within `OBSTACLE_M` of a `marcaj.obstacles` polygon (a hut, shed or tree the row runs up to)
+is not missing planting: it becomes reason `obstacle` (`stretch` keeps gap/planting), `challenge` false, on the map only.
 Sentinel POIs (`sentinel_low_ndvi` / `sentinel_low_ndmi`, `challenge` false) are `marcaj.sentinel` low zones that the
 drone rows confirm (`sentinel_pois`).
 
@@ -32,6 +34,7 @@ from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
 
 from marcaj.layers import exg
+from marcaj.obstacles import OBSTACLES_PATH
 from marcaj.scene import is_scored
 from marcaj.tiles import DATA_DIR, PIXEL_M, REPO_ROOT, TILE_PX, Tile, load_tiles
 
@@ -48,6 +51,9 @@ MAX_HIDDEN = 0.2    # share of a gap that may be hidden (no piece, no-data, shad
 MAX_GREEN = 0.75    # share of a gap with vine green (rows.VINE_RUN_M runs) above which it is a missed row, not a gap
 LOW_ROW = 0.25      # planted share of a row under which its gaps are in doubt
 MAX_PLANTING_M = 15.0  # a longer unplanted row end is a misplaced row, not missing vines
+# a stretch this close to an obstacle runs up to it, not into missing vines; a hut standing in a block has its own yard:
+# the V21-13 rows stop 5.6-6.0 m short of its roof (a building beyond the block edge gets the tree reach)
+OBSTACLE_M = {"tree": 2.0, "building": 6.5}
 
 
 @dataclass
@@ -163,7 +169,8 @@ def row_gaps(rows: list[_Row], green: bool = False, min_gap_m: float = GAP_M) ->
     by_plot: dict[str, list[_Row]] = defaultdict(list)
     for row in rows:
         if planted[id(row)].sum() * SAMPLE_M >= 1.0:
-            by_plot[row.vineyard_id].append(row)
+            # neighbours come from the row's own lattice: a block can hold several patterns ("<pattern>-R001")
+            by_plot[row.row_id.rsplit("-R", 1)[0]].append(row)
     gaps = []
 
     def add(row: _Row, kind: str, start: int, end: int, a: np.ndarray, b: np.ndarray, share: float, hidden: np.ndarray) -> None:
@@ -198,7 +205,11 @@ def row_gaps(rows: list[_Row], green: bool = False, min_gap_m: float = GAP_M) ->
     return gaps
 
 
-def gap_pois(rows: list[_Row], green: bool = False) -> list[dict[str, Any]]:
+def _reach(obstacle: dict[str, Any]) -> float:
+    return OBSTACLE_M[obstacle["obstacle_type"] if obstacle.get("in_block", 1.0) >= 0.5 else "tree"]
+
+
+def gap_pois(rows: list[_Row], green: bool = False, obstacles: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:
     """`inspection` Points at the midpoint of each visible row gap or missing row end of at least 5 m (`row_gaps`).
     `challenge` (a scored route target) is every `gap` with vine green over less than `MAX_GREEN` of it (a gap that is
     green all along is a row the canopy model missed: a 21 m and a 58 m one in view), and every `planting` stretch
@@ -206,16 +217,24 @@ def gap_pois(rows: list[_Row], green: bool = False) -> list[dict[str, Any]]:
     most were young or grassed rows the canopy misses; of the 16 without green about half did, and the longer ones are
     rows the model placed wrong. On the example tiles the row ends add 1 of 2 reference edge stretches and 1 gap.
     `confidence` is 1 - hidden share, halved for green gaps and for rows with under `LOW_ROW` of their length planted
-    (young vines the canopy misses, P09), which also hold the true gaps of the reference block V02."""
+    (young vines the canopy misses, P09), which also hold the true gaps of the reference block V02.
+    A stretch within `OBSTACLE_M` of an `obstacles` polygon is reason `obstacle`, never a target, with `obstacle_type`."""
+    blockers = [shape(f["geometry"]) for f in obstacles]
+    blocker_tree = STRtree(blockers)
     out = []
     for gap in row_gaps(rows, green):
         if gap["hidden"] > MAX_HIDDEN:
             continue
         x, y = (gap["start"] + gap["end"]) / 2
         doubt = (gap["green"] >= MAX_GREEN / 2) + (gap["row_planted"] < LOW_ROW) + (gap["kind"] == "planting")
+        line = LineString([gap["start"], gap["end"]])
+        near = [i for i in (blocker_tree.query(line, predicate="dwithin", distance=max(OBSTACLE_M.values())) if blockers else [])
+                if blockers[i].distance(line) <= _reach(obstacles[i]["properties"])]
+        reason = "obstacle" if len(near) else gap["kind"]
+        extra = {"stretch": gap["kind"], "obstacle_type": obstacles[int(near[0])]["properties"]["obstacle_type"]} if len(near) else {}
         out.append({"type": "Feature", "geometry": mapping(Point(x, y)), "properties": {
-            "label": "inspection", "source": "prediction", "id": f"{gap['kind'].upper()}-{gap['row_id']}-{round(x) % 10000:04d}-{round(y) % 10000:04d}",
-            "reason": gap["kind"], "challenge": gap["green"] < MAX_GREEN if gap["kind"] == "gap" else gap["green"] < 0.1 and gap["gap_m"] <= MAX_PLANTING_M,
+            "label": "inspection", "source": "prediction", "id": f"{reason.upper()}-{gap['row_id']}-{round(x) % 10000:04d}-{round(y) % 10000:04d}",
+            "reason": reason, "challenge": not len(near) and (gap["green"] < MAX_GREEN if gap["kind"] == "gap" else gap["green"] < 0.1 and gap["gap_m"] <= MAX_PLANTING_M), **extra,
             "origin": "candidate", "status": "new",
             "vineyard_id": gap["vineyard_id"], "row_id": gap["row_id"], "gap_m": round(gap["gap_m"], 2),
             "gap_start": [round(v, 2) for v in gap["start"]], "gap_end": [round(v, 2) for v in gap["end"]],
@@ -300,16 +319,19 @@ def write(features: list[dict[str, Any]], path: Path = POI_PATH) -> Path:
     return path
 
 
-def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: bool = True) -> None:
+def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: bool = True, obstacles_path: Path = OBSTACLES_PATH) -> None:
     from marcaj import sentinel
 
     started = time.perf_counter()
     features = json.loads(scene_path.read_text(encoding="utf-8"))["features"]
+    obstacles = [f for f in features if f["properties"].get("label") == "obstacle"]
+    if not obstacles and obstacles_path.is_file():  # a scene written before predict detected obstacles, or a Marcaj export
+        obstacles = json.loads(obstacles_path.read_text(encoding="utf-8"))["features"]
     if any(f["properties"].get("label") == "row" and f["properties"].get("source") == "reference" for f in features):
         features = [f for f in features if is_scored(f)]  # a Marcaj-export scene: its rows and canopies, not the model's
     rows = sample_rows(features)
-    pois = gap_pois(rows)
-    counts = {key: sum(p["properties"]["reason"] == key[0] and p["properties"]["challenge"] == key[1] for p in pois) for key in (("gap", True), ("gap", False), ("planting", True), ("planting", False))}
+    pois = gap_pois(rows, obstacles=obstacles)
+    counts = {key: sum(p["properties"]["reason"] == key[0] and p["properties"]["challenge"] == key[1] for p in pois) for key in (("gap", True), ("gap", False), ("planting", True), ("planting", False), ("obstacle", False))}
     print(f"{counts} (reason, challenge) from {len(rows)} rows in {time.perf_counter() - started:.1f} s")
     if satellite:
         chosen = sentinel.scenes()
@@ -331,5 +353,6 @@ if __name__ == "__main__":
     parser.add_argument("--scene", type=Path, default=PREDICTIONS_PATH, help="EPSG:32635 GeoJSON with row and vineyard features (predictions, or a Marcaj-export scene)")
     parser.add_argument("--output", type=Path, default=POI_PATH)
     parser.add_argument("--no-satellite", action="store_true")
+    parser.add_argument("--obstacles", type=Path, default=OBSTACLES_PATH, help="obstacle polygons, used when the scene holds none")
     args = parser.parse_args()
-    main(args.scene, args.output, not args.no_satellite)
+    main(args.scene, args.output, not args.no_satellite, args.obstacles)

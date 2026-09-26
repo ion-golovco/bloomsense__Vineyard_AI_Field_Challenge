@@ -19,6 +19,7 @@
         <nav aria-label="Sections">
           <button type="button" data-nav="per-field" aria-current="page" title="Per field"><b aria-hidden="true">▧</b><span>Per field</span></button>
           <button type="button" data-nav="all-fields" title="All fields"><b aria-hidden="true">▦</b><span>All fields</span></button>
+          <button type="button" data-nav="measurements" title="Measurements"><b aria-hidden="true">▥</b><span>Measurements<small>Areas &amp; rows</small></span></button>
           <button type="button" data-nav="analysis" title="NDVI / NDMI / Cadastru"><b aria-hidden="true">◈</b><span>NDVI / NDMI<small>Cadastru</small></span></button>
           <button type="button" data-nav="yield" title="Yield &amp; harvest"><b aria-hidden="true">↗</b><span>Yield &amp; harvest</span></button>
         </nav>
@@ -28,7 +29,7 @@
       <p id="status" class="scene-banner" role="status" aria-live="polite">Loading the current field scene…</p>
 
       <section class="field-control floating" aria-labelledby="field-heading">
-        <div class="field-label"><span class="section-kicker">VINEYARD / INSPECTION</span><h1 id="field-heading">Choose a field</h1></div>
+        <div class="field-label"><div class="role-switch" role="group" aria-label="Who is using the app"><button type="button" data-role="inspector" aria-pressed="true">Inspector</button><button type="button" data-role="farmer" aria-pressed="false">Farmer</button></div><span class="section-kicker">VINEYARD / INSPECTION</span><h1 id="field-heading">Choose a field</h1></div>
         <div class="field-input-row">
           <label class="sr-only" for="field-select">Field</label>
           <select id="field-select" disabled><option>Loading fields…</option></select>
@@ -59,20 +60,65 @@
 
       <section class="plan floating" id="plan-panel" tabindex="-1" aria-labelledby="plan-title">
         <div class="panel-title"><div><span class="section-kicker">FIELD PLAN</span><h2 id="plan-title">Where to inspect</h2></div><span id="target-count" class="step-count">—</span></div>
+        <div id="field-score" class="field-score" aria-live="polite" hidden>
+          <div class="score-head"><span>Farmer score</span><strong id="score-now">—</strong><small id="score-model"></small></div>
+          <p id="score-detail"></p>
+          <p id="score-error" class="score-error"></p>
+        </div>
         <p id="plan-summary" class="panel-lead">Loading visit points…</p>
         <div class="plan-tabs" role="group" aria-label="Plan views">
           <button id="visits-tab" class="selected" type="button" data-panel="stops" aria-pressed="true">Visit points</button>
           <button type="button" data-panel="evidence" aria-pressed="false">Evidence</button>
+          <button type="button" data-panel="field-measure" aria-pressed="false">Measurements</button>
         </div>
         <div id="stops-panel">
+          <label id="missing-toggle" class="missing-toggle" hidden><input id="farmer-missing" type="checkbox" /> Include missing canopy</label>
           <div id="stop-list" class="stop-list"></div>
-          <div class="plan-action"><span id="route-status">Route pending</span><button id="route-toggle" type="button" aria-pressed="true">Show route <span aria-hidden="true">↗</span></button></div>
+          <div class="route-planner" role="group" aria-labelledby="planner-title">
+            <div class="planner-head"><strong id="planner-title">Plan a walk</strong><label class="route-cutoff">Covers <select id="route-scope"><option value="field">This field</option><option value="site">Whole farm</option></select></label></div>
+            <div class="planner-point"><span class="point-badge start" aria-hidden="true">S</span><span><small>Start</small><strong id="start-label">Organizer START</strong></span><button id="pick-start" type="button" aria-pressed="false" aria-describedby="start-label">Set on map</button></div>
+            <div class="planner-point"><span class="point-badge end" aria-hidden="true">E</span><span><small>End</small><strong id="end-label">Back to the start</strong></span><button id="pick-end" type="button" aria-pressed="false" aria-describedby="end-label">Set on map</button></div>
+            <div class="planner-actions"><label><input id="route-hops" type="checkbox" checked /> Step across rows at gaps</label><button id="reset-points" type="button">Reset</button><button id="plan-route" class="primary-button" type="button">Plan route</button></div>
+            <p id="planner-status" class="planner-status" role="status" aria-live="polite"></p>
+            <button id="download-route" class="secondary-button" type="button" hidden>Download route.geojson</button>
+          </div>
+          <div class="plan-action"><span id="route-status">Route pending</span><label class="route-cutoff" title="Minimum visit-point confidence">Confidence <select id="route-confidence"><option value="">All</option><option value="0.5">≥ 0.5</option><option value="0.7">≥ 0.7</option></select></label><button id="route-toggle" type="button" aria-pressed="true">Show route <span aria-hidden="true">↗</span></button></div>
         </div>
         <div id="evidence-panel" hidden>
           <div class="evidence-state"><strong>Insufficient evidence</strong><p>A visit recommendation needs dated, comparable satellite observations and previous field notes.</p></div>
-          <div class="evidence-item"><span>NDVI / NDMI</span><strong>Not available</strong></div>
+          <div class="evidence-item"><span>NDVI / NDMI</span><strong id="evidence-satellite">Not available</strong></div>
+          <div class="evidence-item"><span>Cadastru</span><strong id="evidence-cadastre">Not available</strong></div>
           <div class="evidence-item"><span>Prior notes</span><strong>Not available</strong></div>
           <div class="evidence-item"><span>Treatment advice</span><strong>Needs field confirmation</strong></div>
+        </div>
+        <div id="field-measure-panel" hidden><div id="field-measure-card"><p class="measure-empty">Loading measurements…</p></div></div>
+      </section>
+
+      <section class="measure-site floating" id="measure-site" aria-labelledby="measure-site-title" hidden>
+        <details id="measure-site-details" open>
+          <summary class="measure-head"><span class="section-kicker" id="measure-site-title">SITE TOTALS</span><span id="measure-site-basis"></span><span class="measure-chevron" aria-hidden="true">⌄</span></summary>
+          <dl class="measure-grid" id="measure-site-grid"></dl>
+          <p id="measure-site-note" class="measure-note">Loading measurements…</p>
+          <p class="measure-note">Lengths and areas in metres on the ground (EPSG:32635). Canopy and inter-row areas are the union of their polygons.</p>
+        </details>
+      </section>
+
+      <section class="measure-panel floating" id="measure-panel" aria-labelledby="measure-title" hidden>
+        <span class="section-kicker">FIELD MEASUREMENTS</span>
+        <h2 id="measure-title" tabindex="-1">Measurements</h2>
+        <div id="measure-field-card"><p class="measure-empty">Loading measurements…</p></div>
+        <h3 class="measure-rows-title">Rows <small id="row-table-count"></small></h3>
+        <div class="row-table-wrap">
+          <table class="row-table" id="row-table" hidden>
+            <caption class="sr-only">Rows of the selected field, with their lengths and row structure</caption>
+            <thead><tr>
+              <th scope="col" data-sort="row_id" aria-sort="ascending"><button type="button">Row</button></th>
+              <th scope="col" data-sort="length_m" aria-sort="none"><button type="button">Length</button></th>
+              <th scope="col" data-sort="row_structure" aria-sort="none"><button type="button">Structure</button></th>
+            </tr></thead>
+            <tbody id="row-table-body"></tbody>
+          </table>
+          <p id="row-table-empty" class="measure-empty">Loading rows…</p>
         </div>
       </section>
 
@@ -95,8 +141,16 @@
           <button type="button" data-analysis="cadastre" aria-pressed="false">Cadastru</button>
         </div>
         <div class="analysis-state"><span id="analysis-badge" class="availability">NOT AVAILABLE</span><h3 id="analysis-state-title">No NDVI observations</h3><p id="analysis-detail">The current field scene does not include satellite observations.</p></div>
-        <dl class="analysis-facts"><div><dt>Field</dt><dd id="analysis-field">—</dd></div><div><dt>Observation dates</dt><dd id="analysis-dates">—</dd></div><div><dt>Map overlay</dt><dd id="analysis-count">—</dd></div></dl>
+        <div class="analysis-raster" id="analysis-raster" hidden>
+          <label class="analysis-date" for="analysis-date">Capture <select id="analysis-date"></select></label>
+          <div class="raster-legend" role="img" id="analysis-legend" aria-label="Colour scale">
+            <span class="raster-ramp" id="analysis-ramp" aria-hidden="true"></span>
+            <span class="raster-scale" aria-hidden="true"><span id="analysis-ramp-min">—</span><span id="analysis-ramp-max">—</span></span>
+          </div>
+        </div>
+        <dl class="analysis-facts"><div><dt>Field</dt><dd id="analysis-field">—</dd></div><div><dt id="analysis-dates-label">Observation dates</dt><dd id="analysis-dates">—</dd></div><div><dt>Map overlay</dt><dd id="analysis-count">—</dd></div></dl>
         <p class="analysis-footnote" id="analysis-footnote">The violet outline is the field boundary, not a satellite health layer.</p>
+        <p class="analysis-credit" id="analysis-credit" hidden></p>
       </section>
 
       <main class="yield-page" id="yield-page" aria-labelledby="yield-title" hidden>
@@ -145,6 +199,7 @@
         <span><i class="key-field" aria-hidden="true"></i><span id="field-key-label">Selected field</span></span>
         <span id="route-key"><i class="key-route" aria-hidden="true"></i>Inspection route</span>
         <span id="stop-key"><i class="key-stop" aria-hidden="true"></i>Visit point</span>
+        <span id="offroute-key" hidden><i class="key-offroute" aria-hidden="true"></i>Not on this route</span>
         <span id="row-key" hidden><i class="key-row" aria-hidden="true"></i>Vine rows</span>
         <span id="canopy-key"><i class="key-canopy" aria-hidden="true"></i>Canopy segmentation</span>
         <span id="access-key" hidden><i class="key-access" aria-hidden="true"></i>Access &amp; constraints</span>
@@ -153,7 +208,7 @@
         <span id="ndvi-key" hidden><i class="key-ndvi" aria-hidden="true"></i>NDVI zones</span>
         <span id="ndmi-key" hidden><i class="key-ndmi" aria-hidden="true"></i>NDMI zones</span>
         <span id="cadastre-key" hidden><i class="key-cadastre" aria-hidden="true"></i>Cadastru</span>
-        <span class="key-credit"><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a><a href="https://creativecommons.org/licenses/by/4.0/">Drone: 3DATA COLLECT / OpenAerialMap · CC BY 4.0</a></span>
+        <span class="key-credit"><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a><a href="https://creativecommons.org/licenses/by/4.0/">Drone: 3DATA COLLECT / OpenAerialMap · CC BY 4.0</a><span id="sentinel-credit" hidden>Contains modified Copernicus Sentinel data 2025</span><span id="cadastre-credit" hidden>Cadastru: I.P. Cadastrul Bunurilor Imobile</span></span>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

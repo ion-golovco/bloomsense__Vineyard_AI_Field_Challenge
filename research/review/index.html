@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marcaj review</title>
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<style>
+  :root { --bg: #111418; --panel: #1b2027; --line: #2c333d; --text: #e6e9ee; --muted: #8b95a3; --focus: #ffd400;
+          --yes: #e5484d; --no: #30a46c; --maybe: #f5a524; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 1000; background: var(--panel); border-bottom: 1px solid var(--line);
+           display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 16px; }
+  nav button, .answers button, .modes button { background: #262d36; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+  nav button[aria-selected="true"] { background: #3a4452; border-color: var(--focus); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  label { color: var(--muted); }
+  select, input { background: #262d36; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  #progress { font-variant-numeric: tabular-nums; }
+  .help { color: var(--muted); font-size: 12px; width: 100%; }
+  kbd { background: #262d36; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 11px; color: var(--text); }
+  main { padding: 12px 16px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 2px solid var(--line); border-radius: 8px; padding: 8px; }
+  .card.current { border-color: var(--focus); }
+  .card.a-yes { box-shadow: inset 6px 0 0 var(--yes); } .card.a-no { box-shadow: inset 6px 0 0 var(--no); } .card.a-maybe { box-shadow: inset 6px 0 0 var(--maybe); }
+  .imgs { display: flex; gap: 6px; }
+  .imgs img { display: block; width: 240px; height: 240px; object-fit: contain; background: #000; image-rendering: pixelated; border-radius: 4px; }
+  .imgs img.wide { width: auto; flex: 1; min-width: 0; image-rendering: auto; }
+  .meta { color: var(--muted); font-size: 12px; margin: 6px 0; word-break: break-word; }
+  .meta b { color: var(--text); }
+  .flags { color: var(--maybe); font-size: 12px; margin: 4px 0; } .flags.conflict { color: #111; background: var(--maybe); border-radius: 4px; padding: 2px 6px; }
+  .answers { display: flex; gap: 6px; flex-wrap: wrap; }
+  .answers button.on.yes { background: var(--yes); } .answers button.on.no { background: var(--no); } .answers button.on.maybe { background: var(--maybe); color: #111; }
+  #map { height: calc(100vh - 210px); min-height: 320px; border-radius: 8px; }
+  .modes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .modes button[aria-pressed="true"] { background: #3a4452; border-color: var(--focus); }
+  .leaflet-popup-content img { width: 200px; height: 200px; image-rendering: pixelated; display: block; }
+  .leaflet-popup-content button { margin: 4px 4px 0 0; }
+  #plotswrap .grid2 { display: grid; grid-template-columns: 340px 1fr; gap: 12px; }
+  #plotmap { height: calc(100vh - 190px); min-height: 360px; border-radius: 8px; }
+  #plotmap.no-outline-hits .leaflet-outlines-pane path { pointer-events: none !important; }
+  #plotmap.crosshair { cursor: crosshair; }
+  #plotside { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: calc(100vh - 190px); overflow: auto; }
+  #plotside table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #plotside th { text-align: left; color: var(--muted); font-weight: 500; position: sticky; top: -8px; background: var(--panel); padding: 4px; }
+  #plotside td { padding: 3px 4px; border-top: 1px solid var(--line); }
+  #plotside tr[data-id] { cursor: pointer; }
+  #plotside tr[data-id]:hover { background: #262d36; }
+  #plotside tr.sel { background: #3a4452; outline: 1px solid var(--focus); }
+  #plotside tr:focus-visible { outline: 2px solid var(--focus); }
+  #plotside details { margin-bottom: 10px; }
+  .leaflet-tooltip.blocklabel { background: rgba(17, 20, 24, .7); color: #7fe8ff; border: 0; box-shadow: none; padding: 0 3px; font: 11px system-ui, sans-serif; }
+  .leaflet-tooltip.blocklabel::before { display: none; }
+  #plotside summary { cursor: pointer; font-weight: 600; padding: 2px 0; }
+  #candrows button { background: #262d36; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; cursor: pointer; font: inherit; margin: 0 4px 2px 0; }
+  #candrows button[aria-pressed="true"] { background: #3a4452; border-color: var(--focus); }
+  #candrows tr[data-cand] { cursor: pointer; }
+  #candrows tr.sel td { background: #3a4452; }
+  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .bad { color: #ff8b8b; } .mid { color: #f5c46b; }
+  #plotstatus { color: var(--focus); }
+  .readout { background: rgba(17, 20, 24, .85); color: var(--text); padding: 3px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; }
+  .readout:empty { display: none; }
+  .leaflet-control-layers { background: rgba(27, 32, 39, .92); color: var(--text); }
+  .vtx { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: #fff; border: 2px solid #111; border-radius: 2px; }
+  .vtx.on { background: var(--focus); }
+  .midh { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: rgba(255, 255, 255, .55); border: 1px solid #111; border-radius: 50%; }
+  @media (max-width: 900px) { #plotswrap .grid2 { grid-template-columns: 1fr; } #plotside { max-height: 40vh; order: 2; } }
+  @media (max-width: 560px) { #grid { grid-template-columns: 1fr; } .imgs img { width: 48%; height: auto; aspect-ratio: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <nav role="tablist">
+    <button role="tab" data-tab="waste">Waste</button>
+    <button role="tab" data-tab="gaps">Canopy gaps</button>
+    <button role="tab" data-tab="canopies">Long canopies</button>
+    <button role="tab" data-tab="map">Map</button>
+    <button role="tab" data-tab="plots">Plots</button>
+  </nav>
+  <label>Filter <select id="filter"></select></label>
+  <label>Location <select id="location"><option value="">all</option><option>interrow</option><option>block</option><option>headland</option><option>outside</option></select></label>
+  <label>Reviewer <input id="reviewer" size="10" placeholder="name"></label>
+  <span id="progress"></span>
+  <a href="/api/export" style="color:var(--muted)">confirmed.csv</a>
+  <a href="/api/export?conform=1" style="color:var(--muted)" title="waste answers without rule flags, plus map marks">rule-conform csv</a>
+  <div class="help" id="help"></div>
+</header>
+<main>
+  <div id="grid"></div>
+  <div id="mapwrap" hidden>
+    <div class="modes">
+      <button data-mode="" aria-pressed="true">Pan / inspect</button>
+      <button data-mode="waste">Mark waste here</button>
+      <button data-mode="vineyard">Mark missed canopy here</button>
+      <span class="help" style="width:auto">Grey: not labelled · red: waste · green: not waste · orange: unsure · ring: checklist likely · yellow box: accepted by the verifier · pins: your marks (click to delete)</span>
+    </div>
+    <div id="map"></div>
+  </div>
+  <div id="plotswrap" hidden>
+    <div class="modes">
+      <button data-pmode="select" aria-pressed="true"><kbd>S</kbd> Select / edit</button>
+      <button data-pmode="draw"><kbd>D</kbd> Draw</button>
+      <button data-pmode="cadastre"><kbd>C</kbd> From parcels</button>
+      <span style="width:12px"></span>
+      <button data-plabel="vineyard"><span class="chip" style="background:#3ddc84"></span><kbd>V</kbd> Vineyard</button>
+      <button data-plabel="orchard"><span class="chip" style="background:#f5a524"></span><kbd>O</kbd> Orchard</button>
+      <button data-plabel="overgrown"><span class="chip" style="background:#b37feb"></span><kbd>G</kbd> Overgrown</button>
+      <button data-paction="delete"><kbd>⌫</kbd> Delete</button>
+      <button data-paction="undo"><kbd>Z</kbd> Undo</button>
+      <button data-paction="reload">Reload layers</button>
+      <span id="plotstatus" role="status"></span>
+    </div>
+    <div class="grid2">
+      <aside id="plotside">
+        <details id="cands" open>
+          <summary>Predicted plots without an outline (<span id="candcount">…</span>)</summary>
+          <div class="help" id="candrun"></div>
+          <table><thead><tr><th>plot</th><th>m² · rows</th><th>vine evidence</th></tr></thead><tbody id="candrows"></tbody></table>
+        </details>
+        <label>Sort <select id="plotsort"><option value="problem">problems first (new run)</option><option value="iou_new">worst IoU, new run</option><option value="iou_uploaded">worst IoU, uploaded run</option>
+          <option value="area">largest area</option><option value="label">label</option><option value="created">newest</option></select></label>
+        <table><thead><tr><th>#</th><th>outline</th><th>m²</th><th>IoU new</th><th>IoU upl.</th></tr></thead><tbody id="plotrows"></tbody></table>
+      </aside>
+      <div id="plotmap"></div>
+    </div>
+  </div>
+</main>
+<script src="/leaflet/leaflet.js"></script>
+<script>
+const TABS = {
+  waste: { answers: [["waste", "Waste", "w", "yes"], ["not_waste", "Not waste", "n", "no"], ["unsure", "Unsure", "u", "maybe"]] },
+  gaps: { answers: [["real_gap", "Real gap", "g", "no"], ["vines_present", "Vines present (missed canopy)", "v", "yes"], ["partly", "Partly", "p", "maybe"]] },
+  canopies: { answers: [["one_plant", "One plant", "o", "no"], ["several", "Several touching plants", "s", "yes"], ["not_vine", "Not a vine", "x", "maybe"]] },
+};
+const state = { tab: "waste", items: [], shown: [], cur: 0, map: null };
+const $ = (s) => document.querySelector(s);
+const reviewer = $("#reviewer");
+try { reviewer.value = localStorage.getItem("reviewer") || ""; } catch {}
+reviewer.onchange = () => { try { localStorage.setItem("reviewer", reviewer.value); } catch {} };
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function api(path, body, method) {
+  const response = await fetch(path, body ? { method: method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { method: method || "GET" });
+  if (!response.ok) { const text = await response.text(); alert(`${path}: ${response.status} ${text}`); throw new Error(text); }
+  return response.json();
+}
+
+function meta(it) {
+  if (state.tab === "waste") {
+    const prior = it.prior ? ` · checklist <b>${esc(it.prior)}</b>` : "";
+    return `<b>${esc(it.tile)}</b> x ${it.x_px} y ${it.y_px} · E ${it.easting} N ${it.northing} · <b>${esc(it.location)}</b> ${esc(it.vineyard_id)} · ${esc(it.kind)} · score ${it.score ?? "-"}${it.verifier ? " · <b>verifier kept</b>" : ""}${prior}<br>` +
+      (it.lum !== undefined ? `area ${it.area_m2} m² · ${it.w_m}×${it.h_m} m · lum ${it.lum} · chroma ${it.chroma} · hue ${it.hue} · row ${it.row_m} m · ` : `${it.w_m}×${it.h_m} m · `) + `${esc(it.id)} ${esc(it.origin)}` + (it.reason ? `<br>${esc(it.reason)}` : "") +
+      ((it.rule_flags || []).length ? `<div class="flags ${it.answer === "waste" ? "conflict" : ""}">${it.answer === "waste" ? "Your answer may conflict with the rules' not-waste list: " : "Rule check: "}${it.rule_flags.map(esc).join(" · ")}</div>` : "");
+  }
+  if (state.tab === "gaps") return `<b>${esc(it.reason)}</b> ${it.gap_m} m · ${esc(it.row_id)} · green ${it.green_share} · conf ${it.confidence} · <b>${esc(it.tile)}</b> · E ${it.easting} N ${it.northing}<br>yellow: gap · magenta: predicted canopies · cyan: row axis · right image: native 6 m at the gap middle`;
+  return `<b>${it.length_m} m</b> · ${it.area_m2} m² · ${esc(it.vineyard_id)} · <b>${esc(it.tile)}</b> x ${it.x_px} y ${it.y_px}<br>cyan: this canopy · magenta: other canopies · right image: native 6 m at its centre`;
+}
+
+function card(it, i) {
+  const answers = TABS[state.tab].answers;
+  const tone = (answers.find((a) => a[0] === it.answer) || [])[3];
+  const wide = state.tab !== "waste";
+  return `<article class="card ${i === state.cur ? "current" : ""} ${tone ? "a-" + tone : ""}" data-i="${i}">
+    <div class="imgs"><img loading="lazy" src="/${wide ? it.context : it.close}" alt="${wide ? "overview" : "close-up"}" class="${wide ? "wide" : ""}"><img loading="lazy" src="/${wide ? it.close : it.context}" alt="${wide ? "close-up" : "context"}"></div>
+    <div class="meta">${i + 1}. ${meta(it)}</div>
+    <div class="answers">${answers.map(([key, text, k, t]) => `<button class="${t} ${it.answer === key ? "on" : ""}" data-answer="${key}"><kbd>${k.toUpperCase()}</kbd> ${text}</button>`).join("")}<button data-answer=""><kbd>0</kbd> clear</button></div>
+  </article>`;
+}
+
+function render() {
+  const f = $("#filter").value, loc = $("#location").value;
+  const flagged = (it) => (it.rule_flags || []).length > 0;
+  const keep = { "": () => true, open: (it) => !it.answer, done: (it) => !!it.answer, flagged_waste: (it) => it.answer === "waste" && flagged(it),
+                 conform_waste: (it) => it.answer === "waste" && !flagged(it), site: (it) => it.id.startsWith("S-"), verifier: (it) => !!it.verifier }[f] || ((it) => it.answer === f);
+  state.shown = state.items.filter((it) => keep(it) && (!loc || it.location === loc));
+  state.cur = Math.min(state.cur, Math.max(0, state.shown.length - 1));
+  $("#grid").innerHTML = state.shown.map(card).join("") || "<p>Nothing in this filter.</p>";
+  progress();
+}
+
+function progress() {
+  const done = state.items.filter((it) => it.answer).length;
+  const counts = TABS[state.tab].answers.map(([key, text]) => `${text.split(" (")[0]} ${state.items.filter((it) => it.answer === key).length}`).join(" · ");
+  $("#progress").textContent = `${done} / ${state.items.length} labelled · ${counts} · showing ${state.shown.length}`;
+}
+
+function refreshCard(i) {
+  const el = document.querySelector(`.card[data-i="${i}"]`);
+  if (el) el.outerHTML = card(state.shown[i], i);
+}
+
+function focusCard(i) {
+  const prev = state.cur;
+  state.cur = Math.max(0, Math.min(state.shown.length - 1, i));
+  document.querySelector(`.card[data-i="${prev}"]`)?.classList.remove("current");
+  const el = document.querySelector(`.card[data-i="${state.cur}"]`);
+  el?.classList.add("current");
+  el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+async function answer(i, key) {
+  const it = state.shown[i];
+  if (!it) return;
+  await api("/api/answer", { tab: state.tab, id: it.id, answer: key, reviewer: reviewer.value });
+  it.answer = key;
+  refreshCard(i);
+  progress();
+  if (key) {
+    const next = state.shown.findIndex((x, j) => j > i && !x.answer);
+    focusCard(next >= 0 ? next : i + 1);
+  }
+}
+
+async function show(tab) {
+  state.tab = tab;
+  document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  const isMap = tab === "map", isPlots = tab === "plots";
+  $("#grid").hidden = isMap || isPlots; $("#mapwrap").hidden = !isMap; $("#plotswrap").hidden = !isPlots;
+  $("#filter").parentElement.hidden = isMap || isPlots; $("#location").parentElement.hidden = tab !== "waste";
+  if (isPlots) { $("#help").innerHTML = PLOT_HELP; return showPlots(); }
+  if (isMap) { $("#help").textContent = "Pick a mode, then click the map. Click a candidate to label it; click one of your pins to delete it."; $("#progress").textContent = ""; return showMap(); }
+  const answers = TABS[tab].answers;
+  $("#filter").innerHTML = `<option value="">all</option><option value="open">not labelled</option><option value="done">labelled</option>` + answers.map(([k, t]) => `<option value="${k}">${t}</option>`).join("") +
+    (tab === "waste" ? `<option value="flagged_waste">waste, rule-flagged</option><option value="conform_waste">waste, rule-conform</option><option value="site">new site-wide cards (S-)</option><option value="verifier">detector boxes</option>` : "");
+  $("#help").innerHTML = answers.map(([, t, k]) => `<kbd>${k.toUpperCase()}</kbd> ${t}`).join(" · ") + " · <kbd>0</kbd> clear · <kbd>←</kbd><kbd>→</kbd> or <kbd>J</kbd><kbd>K</kbd> move · click a card to select it";
+  state.items = await api(`/api/items/${tab}`);
+  state.cur = 0;
+  render();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, select, textarea")) return;
+  if (state.tab === "plots") return plotKey(e);
+  if (state.tab === "map" || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "arrowright" || k === "arrowdown" || k === "j") { e.preventDefault(); focusCard(state.cur + 1); return; }
+  if (k === "arrowleft" || k === "arrowup" || k === "k") { e.preventDefault(); focusCard(state.cur - 1); return; }
+  if (k === "0" || k === "backspace") { e.preventDefault(); answer(state.cur, ""); return; }
+  const hit = TABS[state.tab].answers.find((a) => a[2] === k);
+  if (hit) { e.preventDefault(); answer(state.cur, hit[0]); }
+});
+
+$("#grid").addEventListener("click", (e) => {
+  const el = e.target.closest(".card");
+  if (!el) return;
+  const i = Number(el.dataset.i);
+  const button = e.target.closest("button[data-answer]");
+  if (button) answer(i, button.dataset.answer); else focusCard(i);
+});
+$("#filter").onchange = render; $("#location").onchange = render;
+document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => show(b.dataset.tab)));
+
+// ---- map
+const COLOURS = { "": "#d0d4da", waste: "#e5484d", not_waste: "#30a46c", unsure: "#f5a524" };
+let mode = "";
+document.querySelectorAll(".modes button").forEach((b) => (b.onclick = () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".modes button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (state.map) state.map.getContainer().style.cursor = mode ? "crosshair" : "";
+}));
+
+function imageryUrl() {  // the client app's imagery on :8000 when it is up, else this server renders the same tiles
+  return new Promise((resolve) => {
+    const probe = new Image();
+    probe.onload = () => resolve("http://127.0.0.1:8000/api/imagery/{z}/{x}/{y}.png");
+    probe.onerror = () => resolve("/imagery/{z}/{x}/{y}.png");
+    probe.src = "http://127.0.0.1:8000/api/imagery/16/37994/23019.png";
+  });
+}
+
+async function showMap() {
+  if (!state.map) {
+    state.map = L.map("map", { maxZoom: 24, preferCanvas: true }).setView([47.1215, 28.709], 16);
+    L.tileLayer(await imageryUrl(), { maxZoom: 24, maxNativeZoom: 22, attribution: "Sireț3 CC BY 4.0, 3DATA COLLECT / OpenAerialMap" }).addTo(state.map);
+    state.layers = {};
+    state.map.on("click", async (e) => {
+      if (!mode) return;
+      const note = mode === "waste" ? "waste here" : "missed canopy here";
+      const r = await api("/api/mark", { label: mode, lon: e.latlng.lng, lat: e.latlng.lat, note, reviewer: reviewer.value });
+      addMark({ type: "Feature", geometry: { type: "Point", coordinates: [e.latlng.lng, e.latlng.lat] }, properties: { id: r.verdict_id, label: mode, tile: r.tile, note } });
+    });
+  }
+  const data = await api("/api/map");
+  Object.values(state.layers).forEach((l) => l.remove());
+  state.layers.blocks = L.geoJSON(data.blocks, { style: { color: "#7CFC00", weight: 1.5, fill: false }, onEachFeature: (f, l) => l.bindTooltip(f.properties.vineyard_id) }).addTo(state.map);
+  state.layers.start = L.geoJSON(data.start, { pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 8, color: "#fff", fillColor: "#cc1f1f", fillOpacity: 1 }).bindTooltip("START") }).addTo(state.map);
+  state.layers.accepted = L.geoJSON(data.accepted, { style: { color: "#ffd400", weight: 3, fill: false } }).addTo(state.map);
+  state.layers.candidates = L.geoJSON(data.candidates, {
+    pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 6, weight: f.properties.prior === "likely" ? 4 : 1, color: f.properties.prior === "likely" ? "#ffd400" : "#111",
+                                                   fillColor: COLOURS[f.properties.answer] || "#d0d4da", fillOpacity: 0.9 }),
+    onEachFeature: (f, l) => l.bindPopup(() => candidatePopup(f, l)),
+  }).addTo(state.map);
+  state.layers.marks = L.layerGroup().addTo(state.map);
+  data.marks.features.forEach(addMark);
+}
+
+function candidatePopup(f, layer) {
+  const p = f.properties;
+  const div = document.createElement("div");
+  div.innerHTML = `<img src="/${p.close}" alt="close-up"><div><b>${esc(p.tile)}</b> x ${p.x_px} y ${p.y_px}<br>${esc(p.location)} · score ${p.score ?? "-"} ${p.prior ? "· checklist " + esc(p.prior) : ""}</div>` +
+    TABS.waste.answers.map(([k, t]) => `<button data-a="${k}">${t}</button>`).join("");
+  div.querySelectorAll("button").forEach((b) => (b.onclick = async () => {
+    await api("/api/answer", { tab: "waste", id: p.id, answer: b.dataset.a, reviewer: reviewer.value });
+    p.answer = b.dataset.a;
+    layer.setStyle({ fillColor: COLOURS[p.answer] });
+    layer.closePopup();
+  }));
+  return div;
+}
+
+function addMark(f) {
+  const [lon, lat] = f.geometry.coordinates;
+  const p = f.properties;
+  const icon = L.divIcon({ className: "", html: `<div style="width:14px;height:14px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${p.label === "waste" ? "#e5484d" : "#e11dff"};border:2px solid #fff"></div>`, iconSize: [14, 14], iconAnchor: [7, 14] });
+  const marker = L.marker([lat, lon], { icon }).addTo(state.layers.marks);
+  const div = document.createElement("div");
+  div.innerHTML = `<b>${p.label === "waste" ? "waste here" : "missed canopy here"}</b><br>${esc(p.tile)}<br>${esc(p.note)}<br><button>Delete</button>`;
+  div.querySelector("button").onclick = async () => { await api(`/api/verdict/${p.id}`, null, "DELETE"); marker.remove(); };
+  marker.bindPopup(div);
+}
+
+// ---- plots: relabel and correct the hand-drawn plot outlines over the cadastral parcels (saved on every change)
+const PLOT_COLOURS = { vineyard: "#3ddc84", orchard: "#f5a524", overgrown: "#b37feb", other: "#d0d4da" };
+const PLOT_KEYS = { v: "vineyard", o: "orchard", g: "overgrown" };
+const SNAP_M = 1.5, CELL = 3e-5;  // snap radius; snap grid cell in degrees (about 2.3 x 3.3 m here)
+const PLOT_HELP = "<kbd>S</kbd> select · click an outline or a list row · <kbd>V</kbd><kbd>O</kbd><kbd>G</kbd> label · drag a vertex · click a midpoint to add one · right-click a vertex (or click it, then <kbd>⌫</kbd>) to remove it · <kbd>⌫</kbd> delete outline · <kbd>Z</kbd> undo · <kbd>J</kbd><kbd>K</kbd> next / previous in the list" +
+  " — <kbd>D</kbd> draw: click vertices, double-click or <kbd>Enter</kbd> to finish, <kbd>⌫</kbd> last point, <kbd>Esc</kbd> cancel, then <kbd>V</kbd><kbd>O</kbd><kbd>G</kbd> to save" +
+  " — <kbd>C</kbd> from parcels: click parcels, <kbd>Enter</kbd> builds their union (cut by the unsaved drawn outline, if any) — vertices snap within 1.5 m to a parcel or outline vertex (big ring), else to an edge (small ring); hold <kbd>Alt</kbd> to place freely";
+const P = { map: null, layers: {}, outlines: new Map(), sel: null, pending: null, mode: "select", draft: [], parcelSel: new Set(),
+            undo: [], alias: {}, queue: Promise.resolve(), dragging: false, vertex: -1, parcels: [], grid: new Map(), order: [], hover: null };
+const ll = (ring) => ring.map(([lon, lat]) => L.latLng(lat, lon));
+const ringOf = (layer) => layer.getLatLngs()[0].map((p) => [p.lng, p.lat]);
+const resolveId = (id) => { while (P.alias[id]) id = P.alias[id]; return id; };
+const pstatus = (text) => { $("#plotstatus").textContent = text; };
+const target = () => P.pending || P.sel;
+
+function enqueue(task) {  // saves run one at a time so every edit replaces the latest id
+  P.queue = P.queue.then(task).catch(async (error) => { pstatus(`failed: ${error.message}; reloaded from the server`); await loadOutlines(); });
+  return P.queue;
+}
+
+async function showPlots() {
+  if (!P.map) {
+    P.map = L.map("plotmap", { maxZoom: 24, doubleClickZoom: false }).setView([47.1215, 28.709], 16);
+    P.map.createPane("parcels").style.zIndex = 380;
+    P.map.createPane("outlines").style.zIndex = 420;
+    L.tileLayer(await imageryUrl(), { maxZoom: 24, maxNativeZoom: 22, attribution: "Sireț3 CC BY 4.0, 3DATA COLLECT / OpenAerialMap · parcels: cadastru.md" }).addTo(P.map);
+    P.layers.outlines = L.layerGroup().addTo(P.map);
+    P.handles = L.layerGroup().addTo(P.map);
+    P.draftLayer = L.polyline([], { pane: "outlines", color: "#ffd400", weight: 2, dashArray: "4 4", interactive: false }).addTo(P.map);
+    P.snapMark = L.circleMarker([0, 0], { radius: 7, color: "#ffd400", weight: 2, fill: false, interactive: false });
+    P.readout = L.control({ position: "bottomleft" });
+    P.readout.onAdd = () => L.DomUtil.create("div", "readout");
+    P.readout.addTo(P.map);
+    P.map.on("click", onPlotClick);
+    P.map.on("dblclick", () => { if (P.mode === "draw") finishDraft(); });
+    let frame = 0;
+    P.map.on("mousemove", (e) => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => onPlotMove(e)); });
+    await loadLayers();
+    await loadOutlines();
+    const all = [...P.outlines.values()].map((o) => o.layer.getBounds());
+    if (all.length) P.map.fitBounds(all.reduce((a, b) => a.extend(b), L.latLngBounds(all[0].getSouthWest(), all[0].getNorthEast())));
+    await loadCandidates();
+  } else {
+    P.map.invalidateSize();
+    await enqueue(loadOutlines);
+    await loadCandidates();
+  }
+}
+
+async function loadLayers() {
+  const data = await api("/api/plots/layers");
+  ["parcels", "blocksNew", "blocksUploaded", "start"].forEach((k) => P.layers[k]?.remove());
+  const dashed = (color) => ({ interactive: false, style: { color, weight: 2, dashArray: "7 6", fill: false } });
+  P.layers.parcels = L.geoJSON(data.parcels, { pane: "parcels", interactive: false, style: parcelStyle }).addTo(P.map);
+  P.parcels = []; P.grid = new Map();
+  P.layers.parcels.eachLayer((layer) => {
+    const f = layer.feature, polys = f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates;
+    const rings = polys.flat(1), b = layer.getBounds();
+    P.parcels[f.properties.id] = { id: f.properties.id, area: f.properties.area_m2, layer, rings, box: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] };
+    rings.forEach((ring) => ring.forEach(([lon, lat]) => {
+      const key = `${Math.floor(lon / CELL)},${Math.floor(lat / CELL)}`;
+      (P.grid.get(key) || P.grid.set(key, []).get(key)).push([lon, lat]);
+    }));
+  });
+  P.layers.blocksNew = L.geoJSON(data.blocks_new, { ...dashed("#00d0ff"), onEachFeature: (f, layer) => layer.bindTooltip(esc(f.properties.vineyard_id), { permanent: true, direction: "center", className: "blocklabel" }) }).addTo(P.map);
+  P.layers.blocksUploaded = L.geoJSON(data.blocks_uploaded, dashed("#ff4fd8"));
+  P.layers.start = L.geoJSON(data.start, { pointToLayer: (f, p) => L.circleMarker(p, { radius: 8, color: "#fff", fillColor: "#cc1f1f", fillOpacity: 1, interactive: false }) }).addTo(P.map);
+  P.control?.remove();
+  const swatch = (c, dash) => `<span style="display:inline-block;width:22px;border-top:2px ${dash ? "dashed" : "solid"} ${c};vertical-align:middle;margin-right:4px"></span>`;
+  P.control = L.control.layers(null, {
+    [`${swatch("#3ddc84")}Your outlines`]: P.layers.outlines,
+    [`${swatch("#ffffff")}Cadastral parcels (${data.parcels.features.length})`]: P.layers.parcels,
+    [`${swatch("#00d0ff", 1)}Predicted plots, new run (${data.blocks_new.features.length})`]: P.layers.blocksNew,
+    [`${swatch("#ff4fd8", 1)}Predicted plots, uploaded run (${data.blocks_uploaded.features.length})`]: P.layers.blocksUploaded,
+    [`<span class="chip" style="background:#cc1f1f;border-radius:50%"></span>START`]: P.layers.start,
+  }, { collapsed: window.innerWidth < 900 }).addTo(P.map);
+}
+
+function parcelStyle(f) {
+  const id = f?.properties?.id ?? f;
+  if (P.parcelSel.has(id)) return { color: "#ffd400", weight: 2, opacity: 1, fill: true, fillColor: "#ffd400", fillOpacity: 0.3 };
+  if (P.hover === id) return { color: "#ffffff", weight: 2.5, opacity: 1, fill: false };
+  return { color: "#ffffff", weight: 1, opacity: 0.6, fill: false };
+}
+const restyleParcel = (id) => P.parcels[id]?.layer.setStyle(parcelStyle(id));
+
+function parcelAt(latlng) {  // smallest parcel containing the point (even-odd over all rings)
+  const x = latlng.lng, y = latlng.lat;
+  let best = null;
+  for (const p of P.parcels) {
+    if (!p || x < p.box[0] || x > p.box[2] || y < p.box[1] || y > p.box[3]) continue;
+    let inside = false;
+    for (const ring of p.rings) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside && (!best || p.area < best.area)) best = p;
+  }
+  return best;
+}
+
+function snap(latlng, free, skip) {
+  if (free) return { latlng, hit: false };
+  let best = null, bestD = SNAP_M;
+  const consider = (lat, lon) => { const d = P.map.distance(latlng, [lat, lon]); if (d < bestD) { bestD = d; best = L.latLng(lat, lon); } };
+  const cx = Math.floor(latlng.lng / CELL), cy = Math.floor(latlng.lat / CELL);
+  if (P.map.hasLayer(P.layers.parcels)) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) (P.grid.get(`${cx + dx},${cy + dy}`) || []).forEach(([lon, lat]) => consider(lat, lon));
+  const near = [...P.outlines.values()].filter((o) => o !== skip && o.layer.getBounds().pad(0.05).contains(latlng)).map((o) => o.layer.getLatLngs()[0].map((q) => [q.lng, q.lat]));
+  near.forEach((ring) => ring.forEach(([lon, lat]) => consider(lat, lon)));
+  if (best) return { latlng: best, hit: "vertex" };
+  // no vertex in reach: the nearest point on a parcel or outline edge, in local metres around the cursor
+  const x = latlng.lng, y = latlng.lat, kx = 111320 * Math.cos((y * Math.PI) / 180), ky = 110540, px = SNAP_M / kx, py = SNAP_M / ky;
+  const edges = (ring, closed) => {
+    for (let i = 0, n = ring.length, last = closed ? n : n - 1; i < last; i++) {
+      const [ax, ay] = ring[i], [bx, by] = ring[(i + 1) % n];
+      const ux = (ax - x) * kx, uy = (ay - y) * ky, dx = (bx - ax) * kx, dy = (by - ay) * ky, len = dx * dx + dy * dy;
+      const t = len ? Math.max(0, Math.min(1, -(ux * dx + uy * dy) / len)) : 0, qx = ux + t * dx, qy = uy + t * dy, d = Math.hypot(qx, qy);
+      if (d < bestD) { bestD = d; best = L.latLng(y + qy / ky, x + qx / kx); }
+    }
+  };
+  if (P.map.hasLayer(P.layers.parcels)) for (const p of P.parcels) if (p && x > p.box[0] - px && x < p.box[2] + px && y > p.box[1] - py && y < p.box[3] + py) p.rings.forEach((ring) => edges(ring, false));
+  near.forEach((ring) => edges(ring, true));
+  return best ? { latlng: best, hit: "edge" } : { latlng, hit: false };
+}
+
+function showSnap(result) {
+  if (!result.hit) { P.snapMark.remove(); return; }
+  P.snapMark.setLatLng(result.latlng).setRadius(result.hit === "vertex" ? 8 : 5).addTo(P.map);
+}
+
+function onPlotMove(e) {
+  const parcel = P.map.hasLayer(P.layers.parcels) ? parcelAt(e.latlng) : null;
+  const id = parcel ? parcel.id : null;
+  if (id !== P.hover) { const prev = P.hover; P.hover = id; if (prev !== null) restyleParcel(prev); if (id !== null) restyleParcel(id); }
+  P.readout.getContainer().textContent = parcel ? `parcel ${parcel.id} · ${parcel.area.toLocaleString()} m²${P.parcelSel.has(parcel.id) ? " · selected" : ""}` : "";
+  if (P.mode === "draw") {
+    const s = snap(e.latlng, e.originalEvent.altKey);
+    showSnap(s);
+    P.draftLayer.setLatLngs(P.draft.length ? [...P.draft, s.latlng] : []);
+  }
+}
+
+function onPlotClick(e) {
+  if (P.mode === "draw") {
+    const s = snap(e.latlng, e.originalEvent.altKey);
+    P.draft.push(s.latlng);
+    P.draftLayer.setLatLngs(P.draft);
+    pstatus(`drawing: ${P.draft.length} points · double-click or Enter to finish`);
+  } else if (P.mode === "cadastre") {
+    const parcel = parcelAt(e.latlng);
+    if (!parcel) return;
+    P.parcelSel.has(parcel.id) ? P.parcelSel.delete(parcel.id) : P.parcelSel.add(parcel.id);
+    restyleParcel(parcel.id);
+    const area = [...P.parcelSel].reduce((s, id) => s + P.parcels[id].area, 0);
+    pstatus(`${P.parcelSel.size} parcels · ${area.toLocaleString()} m² · Enter builds the outline${P.pending ? " (cut by the drawn outline)" : ""}`);
+  } else if (P.sel && !P.pending) select(null);
+}
+
+function setMode(mode) {
+  if (mode === P.mode) return;
+  if (P.mode === "draw") { P.draft = []; P.draftLayer.setLatLngs([]); P.snapMark.remove(); }
+  if (P.mode === "cadastre" && mode !== "cadastre") { const ids = [...P.parcelSel]; P.parcelSel.clear(); ids.forEach(restyleParcel); }
+  P.mode = mode;
+  document.querySelectorAll("[data-pmode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pmode === mode)));
+  P.map.getContainer().classList.toggle("no-outline-hits", mode !== "select");
+  P.map.getContainer().classList.toggle("crosshair", mode !== "select");
+  if (mode === "draw") { discardPending(); select(null); pstatus("drawing: click the first vertex"); }
+  if (mode === "cadastre") { if (P.sel) select(null); P.handles.clearLayers(); pstatus(P.pending ? "click parcels to cut by the drawn outline · Enter builds it" : "click parcels · Enter builds their union"); }
+  if (mode === "select") { buildHandles(); pstatus(""); }
+}
+
+function finishDraft() {
+  const points = P.draft.filter((p, i, a) => i === 0 || P.map.distance(p, a[i - 1]) > 0.05);
+  if (points.length > 2 && P.map.distance(points[0], points[points.length - 1]) < 0.05) points.pop();
+  if (points.length < 3) { pstatus("an outline needs at least 3 points"); return; }
+  setMode("select");
+  setPending(points, "drawn in the review tool");
+}
+
+function setPending(latlngs, note) {
+  discardPending();
+  P.pending = { note, layer: L.polygon(latlngs, { pane: "outlines", color: "#ffffff", weight: 3, dashArray: "6 4", fillColor: "#ffffff", fillOpacity: 0.12, bubblingMouseEvents: false }).addTo(P.map) };
+  select(null);
+  buildHandles();
+  pstatus("unsaved outline: V / O / G saves it with that label · C cuts parcels by it · Esc discards");
+}
+
+function discardPending() { if (P.pending) { P.pending.layer.remove(); P.pending = null; P.handles.clearLayers(); } }
+
+async function buildUnion() {
+  if (!P.parcelSel.size) { pstatus("click one or more parcels first"); return; }
+  const ids = [...P.parcelSel].sort((a, b) => a - b);
+  const clip = P.pending ? ringOf(P.pending.layer) : null;
+  const res = await api("/api/plots/union", { parcels: ids, clip });
+  setMode("select");
+  setPending(ll(res.ring), `from parcels ${ids.join(", ")}${clip ? " cut by a drawn outline" : ""}`);
+  pstatus(`unsaved outline from ${ids.length} parcels, ${res.area_m2.toLocaleString()} m²${res.parts > 1 ? ` (largest of ${res.parts} parts)` : ""}: V / O / G saves it · Esc discards`);
+}
+
+function tip(rec) {
+  return `<b>${esc(rec.label)}</b> · ${rec.area_m2.toLocaleString()} m² · ${esc(rec.id)}<br>IoU new ${rec.iou_new} ${esc(rec.match_new)} · uploaded ${rec.iou_uploaded} ${esc(rec.match_uploaded)}${rec.note ? "<br>" + esc(rec.note) : ""}`;
+}
+
+function styleOutline(o) {
+  const c = PLOT_COLOURS[o.rec.label] || "#fff", on = o === P.sel;
+  o.layer.setStyle({ color: on ? "#ffd400" : c, weight: on ? 3 : 2, fillColor: c, fillOpacity: on ? 0.25 : 0.1 });
+}
+
+function addOutline(rec) {
+  const o = { rec };
+  o.layer = L.polygon(ll(rec.ring), { pane: "outlines", bubblingMouseEvents: false }).bindTooltip(() => tip(o.rec), { sticky: true });
+  o.layer.on("click", () => { if (P.mode === "select") select(o); });
+  o.layer.addTo(P.layers.outlines);
+  styleOutline(o);
+  P.outlines.set(rec.id, o);
+  return o;
+}
+
+async function loadOutlines() {
+  const recs = await api("/api/plots");
+  const selected = P.sel?.rec.id;
+  P.layers.outlines.clearLayers(); P.outlines.clear(); P.sel = null;
+  recs.forEach(addOutline);
+  select(P.outlines.get(resolveId(selected || "")) || null);
+}
+
+function applyChange(res, geometryFromServer = true) {
+  const o = res.deleted ? P.outlines.get(res.deleted.id) : null;
+  if (res.deleted) P.outlines.delete(res.deleted.id);
+  if (res.created) {
+    if (res.deleted) P.alias[res.deleted.id] = res.created.id;
+    if (o) {
+      o.rec = res.created;
+      P.outlines.set(res.created.id, o);
+      if (geometryFromServer) o.layer.setLatLngs([ll(res.created.ring)]);
+      styleOutline(o);
+      if (o === P.sel && !P.dragging) buildHandles();
+    } else addOutline(res.created);
+  } else if (o) {
+    o.layer.remove();
+    if (o === P.sel) select(null);
+  }
+  renderPlotList();
+  loadCandidates().catch(() => {});
+}
+
+function saveEdit(o, changes, geometryFromServer) {  // changes: {label} and/or {ring}; the server keeps the other
+  return enqueue(async () => {
+    if (!P.outlines.has(o.rec.id)) return;
+    const before = o.rec;
+    pstatus("saving…");
+    const res = await api("/api/plots", { edit: before.id, label: changes.label || before.label, ring: changes.ring, reviewer: reviewer.value });
+    applyChange(res, geometryFromServer);
+    P.undo.push({ type: "edit", id: res.created.id, before });
+    pstatus(`saved ${res.created.label} ${res.created.id} · ${res.created.area_m2.toLocaleString()} m² · IoU new ${res.created.iou_new}`);
+  });
+}
+
+function setLabel(name) {
+  if (P.pending) {
+    const pending = P.pending, ring = ringOf(pending.layer);
+    return enqueue(async () => {
+      pstatus("saving…");
+      const res = await api("/api/plots", { label: name, ring, note: pending.note, reviewer: reviewer.value });
+      if (P.pending === pending) discardPending();
+      applyChange(res);
+      P.undo.push({ type: "create", id: res.created.id });
+      select(P.outlines.get(res.created.id));
+      pstatus(`saved new ${name} ${res.created.id} · ${res.created.area_m2.toLocaleString()} m² · IoU new ${res.created.iou_new}`);
+    });
+  }
+  if (P.sel && P.sel.rec.label !== name) saveEdit(P.sel, { label: name }, true);
+}
+
+function deleteSelected() {
+  const o = P.sel;
+  if (!o) return;
+  select(null);
+  enqueue(async () => {
+    const res = await api(`/api/plots/${o.rec.id}`, null, "DELETE");
+    applyChange(res);
+    P.undo.push({ type: "delete", rec: res.deleted });
+    pstatus(`deleted ${res.deleted.label} ${res.deleted.id} · Z undoes`);
+  });
+}
+
+function undo() {
+  enqueue(async () => {
+    const step = P.undo.pop();
+    if (!step) { pstatus("nothing to undo"); return; }
+    if (step.type === "create") {
+      applyChange(await api(`/api/plots/${resolveId(step.id)}`, null, "DELETE"));
+    } else if (step.type === "delete") {
+      const r = step.rec, res = await api("/api/plots", { label: r.label, utm: r.utm, note: r.note, reviewer: r.reviewer, replaces: r.replaces || r.id });
+      applyChange(res);
+      P.alias[r.id] = res.created.id;
+      select(P.outlines.get(res.created.id));
+    } else {
+      const r = step.before, res = await api("/api/plots", { edit: resolveId(step.id), label: r.label, utm: r.utm });
+      applyChange(res, true);
+      select(P.outlines.get(res.created.id));
+    }
+    pstatus(`undone (${P.undo.length} more)`);
+  });
+}
+
+function select(o) {
+  const prev = P.sel;
+  P.sel = o;
+  P.vertex = -1;
+  if (prev && P.outlines.get(prev.rec.id) === prev) styleOutline(prev);
+  if (o) { styleOutline(o); o.layer.bringToFront(); }
+  buildHandles();
+  renderPlotList();
+}
+
+function buildHandles() {
+  P.handles.clearLayers();
+  const t = target();
+  if (!t || P.mode !== "select") return;
+  const layer = t.layer, points = layer.getLatLngs()[0];
+  const commit = () => { if (t === P.sel) saveEdit(t, { ring: ringOf(layer) }, false); };
+  points.forEach((p, i) => {
+    const marker = L.marker(p, { draggable: true, keyboard: false, zIndexOffset: 1000, icon: L.divIcon({ className: "", html: `<div class="vtx ${i === P.vertex ? "on" : ""}"></div>`, iconSize: [0, 0] }) });
+    marker.on("dragstart", () => { P.dragging = true; P.handles.eachLayer((m) => m.options.mid && m.remove()); });
+    marker.on("drag", (e) => {
+      const s = snap(e.target.getLatLng(), e.originalEvent?.altKey, t);
+      showSnap(s);
+      if (s.hit) e.target.setLatLng(s.latlng);
+      const ring = layer.getLatLngs()[0];
+      ring[i] = s.latlng;
+      layer.setLatLngs([ring]);
+    });
+    marker.on("dragend", () => { P.dragging = false; P.snapMark.remove(); buildHandles(); commit(); });
+    marker.on("click", () => { P.vertex = i; buildHandles(); });
+    marker.on("contextmenu", (e) => { L.DomEvent.preventDefault(e.originalEvent); removeVertex(i); });
+    marker.addTo(P.handles);
+  });
+  points.forEach((p, i) => {
+    const q = points[(i + 1) % points.length];
+    const mid = L.latLng((p.lat + q.lat) / 2, (p.lng + q.lng) / 2);
+    L.marker(mid, { mid: true, keyboard: false, icon: L.divIcon({ className: "", html: '<div class="midh"></div>', iconSize: [0, 0] }) })
+      .on("click", () => { const ring = layer.getLatLngs()[0]; ring.splice(i + 1, 0, mid); layer.setLatLngs([ring]); P.vertex = i + 1; buildHandles(); commit(); })
+      .addTo(P.handles);
+  });
+}
+
+function removeVertex(i) {
+  const t = target();
+  if (!t) return;
+  const ring = t.layer.getLatLngs()[0];
+  if (ring.length <= 3) { pstatus("an outline needs at least 3 vertices"); return; }
+  ring.splice(i, 1);
+  t.layer.setLatLngs([ring]);
+  P.vertex = -1;
+  buildHandles();
+  if (t === P.sel) saveEdit(t, { ring: ringOf(t.layer) }, false);
+}
+
+function renderPlotList() {
+  const recs = [...P.outlines.values()].map((o) => o.rec);
+  const key = $("#plotsort").value;
+  const problem = (r) => (r.label === "vineyard" ? r.iou_new : 1 - r.iou_new);  // vineyards should match a predicted plot, the rest should not
+  const by = { problem: (a, b) => problem(a) - problem(b), iou_new: (a, b) => a.iou_new - b.iou_new, iou_uploaded: (a, b) => a.iou_uploaded - b.iou_uploaded, area: (a, b) => b.area_m2 - a.area_m2,
+               label: (a, b) => a.label.localeCompare(b.label) || a.iou_new - b.iou_new, created: (a, b) => b.created.localeCompare(a.created) }[key];
+  recs.sort(by);
+  P.order = recs.map((r) => r.id);
+  const tone = (v) => (v < 0.5 ? "bad" : v < 0.75 ? "mid" : "");
+  $("#plotrows").innerHTML = recs.map((r, i) => `<tr data-id="${esc(r.id)}" tabindex="0" class="${P.sel?.rec.id === r.id ? "sel" : ""}"><td>${i + 1}</td>
+    <td><span class="chip" style="background:${PLOT_COLOURS[r.label] || "#fff"}"></span>${esc(r.label)}<br><span style="color:var(--muted)">${esc(r.id)}</span></td>
+    <td>${r.area_m2.toLocaleString()}</td><td class="${tone(r.iou_new)}">${r.iou_new.toFixed(2)}<br><span style="color:var(--muted)">${esc(r.match_new)}</span></td>
+    <td class="${tone(r.iou_uploaded)}">${r.iou_uploaded.toFixed(2)}</td></tr>`).join("");
+  const count = (l) => recs.filter((r) => r.label === l).length;
+  const vine = recs.filter((r) => r.label === "vineyard").map((r) => r.iou_new).sort((a, b) => a - b);
+  $("#progress").textContent = `${recs.length} outlines · vineyard ${count("vineyard")} · orchard ${count("orchard")} · overgrown ${count("overgrown")}` +
+    (vine.length ? ` · median best IoU of vineyard outlines, new run ${vine[Math.floor(vine.length / 2)].toFixed(2)}` : "");
+  document.querySelector("#plotrows tr.sel")?.scrollIntoView({ block: "nearest" });
+}
+
+// ---- plots: predicted plots without an outline (under 50% on vineyard outlines), answered as object verdicts on the block
+const CAND_ANSWERS = [["vineyard", "Vineyard"], ["not_vineyard", "Not a vineyard"], ["unsure", "Unsure"]];
+const candStyle = (c, on) => ({ interactive: false, color: on ? "#ffd400" : c.dropped || c.rule ? "#ff5a5a" : "#ffb020", weight: on ? 4 : 2, dashArray: "3 5", fill: false });
+
+async function loadCandidates() {
+  const data = await api("/api/plots/candidates");
+  const selected = P.cands?.[P.cand]?.id;
+  P.cands = data.items;
+  P.cand = P.cands.findIndex((c) => c.id === selected);
+  if (P.layers.cands) { P.control?.removeLayer(P.layers.cands); P.layers.cands.remove(); }
+  P.candLayers = P.cands.map((c, i) => L.polygon(ll(c.ring), candStyle(c, i === P.cand)));
+  P.layers.cands = L.layerGroup(P.candLayers).addTo(P.map);
+  P.control?.addOverlay(P.layers.cands, `<span style="display:inline-block;width:22px;border-top:2px dashed #ffb020;vertical-align:middle;margin-right:4px"></span>Plots without an outline (${P.cands.length})`);
+  $("#candrun").textContent = `${data.run} · orange: the vine-evidence rule keeps it, red: it drops it. Click a row to zoom. Vineyard? Then outline it (D or C, then V).`;
+  renderCandidates();
+}
+
+function renderCandidates() {
+  const f = (v, d = 2) => (v === undefined || v === null ? "–" : Number(v).toFixed(d));
+  const pct = (v) => `${Math.round(100 * v)}%`;
+  $("#candcount").textContent = `${P.cands.length}, ${P.cands.filter((c) => c.answer).length} answered`;
+  $("#candrows").innerHTML = P.cands.map((c, i) => {
+    const e = c.evidence, sel = i === P.cand ? "sel" : "";
+    const status = c.dropped ? `dropped: ${esc(c.dropped)}` : c.rule ? `kept; the rule would drop it: ${esc(c.rule)}` : "kept; the rule keeps it";
+    return `<tr data-cand="${i}" tabindex="0" class="${sel}"><td><b>${esc(c.vineyard_id)}</b><br><span class="${c.dropped || c.rule ? "bad" : ""}">${status}</span></td>
+      <td>${c.area_m2.toLocaleString()}<br>${c.rows} rows · ${f(c.row_spacing_m)} m</td>
+      <td>${e.cover === undefined ? "no vine evidence in this run" : `cover ${f(e.cover)} · rows with canopy ${f(e.rows_any)}<br>on−between ExG ${f(e.contrast, 3)} · median piece ${f(e.len_med, 1)} m · ${f(e.per_10m, 1)} pieces/10 m`}<br>
+      <span style="color:var(--muted)">on vineyard ${pct(c.on.vineyard)} · orchard ${pct(c.on.orchard)} · overgrown ${pct(c.on.overgrown)}</span></td></tr>
+      <tr class="${sel}"><td colspan="3">${CAND_ANSWERS.map(([k, t]) => `<button data-cand="${i}" data-answer="${k}" aria-pressed="${c.answer === k}">${t}</button>`).join("")}</td></tr>`;
+  }).join("");
+}
+
+function focusCandidate(i) {
+  const c = P.cands[i];
+  if (!c) return;
+  if (P.cand >= 0 && P.candLayers[P.cand]) P.candLayers[P.cand].setStyle(candStyle(P.cands[P.cand], false));
+  P.cand = i;
+  P.candLayers[i].setStyle(candStyle(c, true)).bringToFront();
+  if (!P.map.hasLayer(P.layers.cands)) P.layers.cands.addTo(P.map);
+  P.map.fitBounds(P.candLayers[i].getBounds(), { padding: [60, 60], maxZoom: 21 });
+  renderCandidates();
+}
+
+async function answerCandidate(i, key) {
+  const c = P.cands[i];
+  const answer = c.answer === key ? "" : key;  // pressing the current answer again clears it
+  const res = await api("/api/plots/candidates", { id: c.id, answer, reviewer: reviewer.value });
+  c.answer = res.answer;
+  c.verdict_id = res.verdict_id;
+  focusCandidate(i);
+  pstatus(answer === "vineyard" ? `${c.vineyard_id}: vineyard — now outline it: D draw or C from parcels, then V saves it` :
+          answer ? `${c.vineyard_id}: ${answer.replace("_", " ")} saved` : `${c.vineyard_id}: answer cleared`);
+}
+
+function focusOutline(o) {
+  if (!o) return;
+  if (P.mode !== "select") setMode("select");
+  discardPending();
+  select(o);
+  P.map.fitBounds(o.layer.getBounds(), { padding: [40, 40], maxZoom: 20 });
+}
+
+function stepOutline(delta) {
+  const i = P.order.indexOf(P.sel?.rec.id);
+  const next = P.order[Math.max(0, Math.min(P.order.length - 1, i < 0 ? 0 : i + delta))];
+  focusOutline(P.outlines.get(next));
+}
+
+function plotKey(e) {
+  const k = e.key.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === "z") { e.preventDefault(); undo(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const handled = () => e.preventDefault();
+  if (k === "escape") {
+    handled();
+    if (P.mode !== "select") setMode("select");
+    else if (P.pending) { discardPending(); pstatus("discarded"); }
+    else if (P.vertex >= 0) { P.vertex = -1; buildHandles(); }
+    else select(null);
+  } else if (k === "enter") {
+    if (P.mode === "draw") { handled(); finishDraft(); }
+    else if (P.mode === "cadastre") { handled(); buildUnion(); }
+    else if (e.target.matches("tr[data-id]")) { handled(); focusOutline(P.outlines.get(e.target.dataset.id)); }
+    else if (e.target.matches("tr[data-cand]")) { handled(); focusCandidate(Number(e.target.dataset.cand)); }
+  } else if (k === "backspace" || k === "delete") {
+    handled();
+    if (P.mode === "draw") { P.draft.pop(); P.draftLayer.setLatLngs(P.draft); }
+    else if (P.vertex >= 0) removeVertex(P.vertex);
+    else if (P.pending) { discardPending(); pstatus("discarded"); }
+    else deleteSelected();
+  } else if (PLOT_KEYS[k] && P.mode === "select") { handled(); setLabel(PLOT_KEYS[k]); }
+  else if (k === "z" || k === "u") { handled(); undo(); }
+  else if (k === "d") { handled(); setMode("draw"); }
+  else if (k === "c") { handled(); setMode("cadastre"); }
+  else if (k === "s") { handled(); setMode("select"); }
+  else if (k === "j") { handled(); stepOutline(1); }
+  else if (k === "k") { handled(); stepOutline(-1); }
+}
+
+document.querySelectorAll("[data-pmode]").forEach((b) => (b.onclick = () => setMode(b.dataset.pmode)));
+document.querySelectorAll("[data-plabel]").forEach((b) => (b.onclick = () => setLabel(b.dataset.plabel)));
+document.querySelector('[data-paction="delete"]').onclick = () => (P.pending ? discardPending() : deleteSelected());
+document.querySelector('[data-paction="undo"]').onclick = undo;
+document.querySelector('[data-paction="reload"]').onclick = () => enqueue(async () => { await loadLayers(); await loadOutlines(); await loadCandidates(); pstatus("layers reloaded"); });
+$("#plotsort").onchange = renderPlotList;
+$("#candrows").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-answer]");
+  if (button) return answerCandidate(Number(button.dataset.cand), button.dataset.answer);
+  const tr = e.target.closest("tr[data-cand]");
+  if (tr) focusCandidate(Number(tr.dataset.cand));
+});
+$("#plotrows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) focusOutline(P.outlines.get(tr.dataset.id)); });
+
+show(new URLSearchParams(location.search).get("tab") || "waste");
+</script>
+</body>
+</html>

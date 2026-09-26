@@ -36,39 +36,51 @@ def _direction(line: LineString) -> np.ndarray:
     return d / np.linalg.norm(d)
 
 
+def _pattern(properties: dict[str, Any]) -> str:
+    """The row lattice a row or plot belongs to (`marcaj.plots`): `pattern_id`, or the vineyard_id before blocks."""
+    return properties.get("pattern_id") or properties["vineyard_id"]
+
+
 def kept_rows(features: list[dict[str, Any]]) -> dict[str, list[tuple[str, LineString]]]:
-    """Each plot's (row_id, axis) in order across the plot, without stray rows: a row closer than `STRAY_SHARE` of the
-    plot's spacing to both neighbours, which are themselves about one spacing apart, is a grass strip or weed line
-    between two vine rows (neighbours 0.7-1.4 spacings apart). 14 of 648 rows on the site; on r006 they are the 3
-    predicted rows 1.1-1.4 m off any reference row, which split 3 reference inter-rows into 6 slivers."""
-    spacing = {f["properties"]["vineyard_id"]: f["properties"]["row_spacing_m"] for f in features if f["properties"]["label"] == "block"}
-    by_plot: dict[str, list[tuple[str, LineString]]] = defaultdict(list)
+    """Each row pattern's (row_id, axis) in order across the rows, without stray rows: a row closer than `STRAY_SHARE`
+    of the pattern's spacing to both neighbours, which are themselves about one spacing apart, is a grass strip or weed
+    line between two vine rows (neighbours 0.7-1.4 spacings apart). 14 of 648 rows on the site; on r006 they are the 3
+    predicted rows 1.1-1.4 m off any reference row, which split 3 reference inter-rows into 6 slivers. Keyed by pattern,
+    not block: a block (vineyard_id) may hold several row lattices, and only one lattice's rows are neighbours."""
+    spacing = {}
+    for feature in features:
+        if feature["properties"]["label"] == "block":
+            for pattern in feature["properties"].get("patterns", [feature["properties"]]):
+                spacing[_pattern(pattern)] = pattern["row_spacing_m"]
+    by_pattern: dict[str, list[tuple[str, LineString]]] = defaultdict(list)
     for feature in features:
         if feature["properties"]["label"] == "row":
-            by_plot[feature["properties"]["vineyard_id"]].append((feature["properties"]["row_id"], shape(feature["geometry"])))
+            by_pattern[_pattern(feature["properties"])].append((feature["properties"]["row_id"], shape(feature["geometry"])))
     out = {}
-    for plot_id, rows in by_plot.items():
+    for pattern_id, rows in by_pattern.items():
         rows = sorted(rows, key=lambda row: row[0])
         along = _direction(rows[0][1])
         across = np.array([-along[1], along[0]])
         v = [float(np.asarray(line.centroid.coords[0]) @ across) for _, line in rows]
-        step = spacing.get(plot_id, 0.0)
+        step = spacing.get(pattern_id, 0.0)
         kept = [0]
         for k in range(1, len(rows) - 1):
             left, right = abs(v[k] - v[kept[-1]]), abs(v[k + 1] - v[k])
             if not (max(left, right) < STRAY_SHARE * step and 0.7 * step <= left + right <= 1.4 * step):
                 kept.append(k)
-        out[plot_id] = [rows[k] for k in kept + ([len(rows) - 1] if len(rows) > 1 else [])]
+        out[pattern_id] = [rows[k] for k in kept + ([len(rows) - 1] if len(rows) > 1 else [])]
     return out
 
 
 def interrow_areas(features: list[dict[str, Any]], exclusions) -> list[dict[str, Any]]:
-    """One polygon between each pair of neighbouring rows of a plot (`kept_rows`): inset `INTERROW_INSET_M` from both
-    axes, ending where the shorter row ends (the rules), minus `exclusions`. An end within `EXTEND_M` of an exclusion is
-    carried onto it: the plot's road setback stops rows 0.95 m short of the passages at 547 of 640 row ends, where the
-    vines visibly run on into the passage polygon, and without this no inter-row touches a passage."""
+    """One polygon between each pair of neighbouring rows of a row pattern (`kept_rows`): inset `INTERROW_INSET_M` from
+    both axes, ending where the shorter row ends (the rules), minus `exclusions`. An end within `EXTEND_M` of an
+    exclusion is carried onto it: the plot's road setback stops rows 0.95 m short of the passages at 547 of 640 row ends,
+    where the vines visibly run on into the passage polygon, and without this no inter-row touches a passage. Each takes
+    its rows' vineyard_id and pattern_id."""
+    block = {_pattern(f["properties"]): f["properties"]["vineyard_id"] for f in features if f["properties"]["label"] == "row"}
     areas = []
-    for plot_id, rows in kept_rows(features).items():
+    for pattern_id, rows in kept_rows(features).items():
         along = _direction(rows[0][1])
         across = np.array([-along[1], along[0]])
         frame = lambda u, w: along * u + across * w
@@ -87,7 +99,7 @@ def interrow_areas(features: list[dict[str, Any]], exclusions) -> list[dict[str,
             parts = [part for part in getattr(polygon, "geoms", [polygon]) if part.geom_type == "Polygon"]
             if parts:
                 areas.append({"type": "Feature", "geometry": mapping(max(parts, key=lambda part: part.area)),
-                              "properties": {"label": "interrow_area", "vineyard_id": plot_id, "interrow_cover": "bare_soil"}})
+                              "properties": {"label": "interrow_area", "vineyard_id": block[pattern_id], "pattern_id": pattern_id, "interrow_cover": "bare_soil"}})
     return areas
 
 

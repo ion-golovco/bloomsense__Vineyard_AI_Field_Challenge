@@ -15,7 +15,11 @@ Method, per tile and per predicted plot (`marcaj.plots.detect_plots` blocks and 
    from grass, an axis run over a grass verge or a weed-covered block does not (true rows in grass
    1.34-2.5, the verge and weed axes looked at 0.79-1.04). The old green-share contrast (`row_contrast`)
    is off: in grass it scored true rows 1.09-1.16 and the inter-row axes 0.97-1.28.
-3. Canopy = green inside the +-`tube_m` tube of the kept axes, closed with a disk of `close_m` (the rules
+3. Canopy = green inside the +-`tube_m` tube of the kept axes. Along each kept axis, a `weak_window_m` stretch whose
+   tube is under `weak_share` green also takes 2g - r - b above `weak_dn`: young, weak or dark-leaved vines fall under
+   the full threshold, and most >= 5 m gap candidates on rows with visible vines were such stretches (a piece mostly of
+   these pixels longer than `weak_max_m` is grass or soil and loses them; vines are at most about 2.5 m). Then closed
+   with a disk of `close_m` (the rules
    trace leaves "within about 10 cm", so gaps under 10 cm inside one plant close; the median gap between
    pieces of one reference plant was 7 cm), holes filled (CVAT polygons hold none), 8-connected
    components; a piece longer than `strip_m` along the row whose mean g - r is above `strip_gr` is dropped
@@ -26,8 +30,9 @@ Method, per tile and per predicted plot (`marcaj.plots.detect_plots` blocks and 
    (the rules leave out leaf clumps under about 0.2 m2), except in a young block: where the median piece
    of at least `young_m2` (one plot on one tile, at least `young_pieces` of them) is under `min_area_m2`,
    the pieces are the plants ("each plant is its own polygon, however small") and are kept down to
-   `young_m2`. Polygonised, simplified and moved `inset_m` inwards (matched polygons were 10-12% larger
-   than the reference, +1.2-1.5 cm on the outline).
+   `young_m2`; the same test per row (`row_young`) catches weak or replanted rows in mature blocks. Polygonised,
+   simplified and moved `inset_m` inwards (matched polygons were 10-12% larger than the reference, +1.2-1.5 cm on
+   the outline), keeping every part a self-touching pixel ring or the inset splits off (`all_parts`).
 Each polygon takes its plot's `vineyard_id`; nothing is predicted outside predicted plots.
 
 The reference canopies are cut at exactly 0.30 m from their row line (the farthest vertex of 90% / 77% of
@@ -40,7 +45,19 @@ canopy_rules.md): judge canopy score 0.855 (union IoU 0.821, instance F1 0.905),
 399 / 251, from 0.668 (0.664, 0.674) with ExG; 0.854 through `canopy_net` "and". With the reference rows
 0.897 (diagnostic). Site-wide (131 tiles, as predict.py calls it) the strip rule removes 35 canopies / 380 m2
 and the young-block rule adds 275 (238 in P09). About 0.5 s per vineyard tile on an M4 Pro, one core
-(0.7-0.9 s on the dense reference tiles), plus the network."""
+(0.7-0.9 s on the dense reference tiles), plus the network.
+
+Recall rules of 26 September (`all_parts`, `weak_*`, `row_young`; research/probes/canopy_recall_*.py, rows frozen from
+the uploaded predictions, through `canopy_net` "and"): judge canopy 0.8538 -> 0.8512 (IoU 0.8193 -> 0.8177, F1 0.9056
+-> 0.9015; judge points 44.88 -> 44.86 of 50, the canopy-area count rising 0.956 -> 0.982); site canopies 13,609 ->
+14,235; >= 5 m gap candidates on predicted rows 175 -> 116 (1,672 -> 1,043 m); the organizers' own gaps on the two tiles
+still 7/10 found. About 0.6 s per tile.
+
+`refit_rows` (predict.py, after the canopy) moves the exported row axes onto these canopies. On the pattern-keyed plots
+of 26 September 16:00 (679 rows, 606 moved), the lattice sat a median 7 cm from the canopy (p95 0.18 m at the row centre,
+0.28 m at an end; 0.08 m from the reference rows, now 0.06 m). Canopy outside +-0.3 m of the rows 1,992 -> 1,082 of
+13,928 m2, canopy inside inter-rows 1,792 -> 972 m2, matched inter-row IoU median 0.935 / 0.896 -> 0.957 / 0.938 on
+r021 / r006, >= 5 m gap route targets 114 -> 103; judge 44.86 -> 44.87 (research/probes/rows_refit_*.py). About 4 s for the site."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -50,15 +67,19 @@ import rasterio
 from rasterio.features import rasterize, shapes
 from rasterio.transform import Affine, array_bounds
 from scipy import ndimage
+import shapely
 from shapely import make_valid
 from shapely.geometry import LineString, Polygon, box, mapping, shape
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import unary_union
 
 from marcaj.layers import exg
 from marcaj.tiles import PIXEL_M, Tile
 
 EIGHT = np.ones((3, 3), bool)
+SLIVER_M2 = 0.01  # polygon parts under this (16 px) are outline slivers
 FLANK_M = (0.6, 1.0)  # beside the canopy, inside the inter-row (rows are 2.0-3.15 m apart)
+VEG_RING_M = (0.35, 0.9)  # the ground around a piece that `in_vegetation` looks at
 
 
 @dataclass(frozen=True)
@@ -83,6 +104,20 @@ class CanopyParams:
     young_pieces: int = 10     # ...young and small (with at least this many pieces): keep pieces down to `young_m2`; 0 = off
     strip_m: float = 8.0       # a canopy piece longer than this along the row...
     strip_gr: float = 15.0     # ...whose mean g - r (DN) is above this is grass or weeds, not vines; 0 = off
+    weak_dn: float = 15.0      # along a kept axis, a stretch whose tube is under `weak_share` colour takes 2g - r - b above this; 0 = off
+    weak_share: float = 0.15   # ...(share of the tube's pixels above `green_dn`, per stretch of `weak_window_m`)
+    weak_window_m: float = 4.0 # about two plants at the ~2 m planting distance
+    weak_max_m: float = 4.0    # ...but a piece mostly of such pixels longer than this along the row is grass; 0 = off
+    row_young: int = 6         # the young rule per row: a row with at least this many pieces whose median is small; 0 = off
+    all_parts: bool = True     # keep every polygon part of a label (not only the largest) and don't let the inset split one
+    long_m: float = 0.0        # a piece longer than this along the row is split at necks under `long_neck` instead; 0 = off
+    long_neck: float = 0.5
+    veg_m: float = 3.0         # a piece longer than this whose mean g - r is above `veg_gr`, standing in ground that is over
+    veg_gr: float = 10.0       # ...`veg_ring` green (2g - r - b above `green_dn`, 0.35-0.9 m around it) and bluish-green too
+    veg_ring: float = 0.4      # ...(mean g - r of that green above `veg_ring_gr`), is cut from a tree, shrub or lush weeds; 0 = off
+    veg_ring_gr: float = 8.5
+    tuft_m2: float = 0.0       # a piece mostly of weak-stretch pixels (`weak_dn`) is kept down to this; 0 = off
+    lab_a: float = 0.0         # also count as colour a pixel whose CIELAB a* (smoothed) is under this (green hue, any darkness); 0 = off
 
 
 def excess_green(rgb: np.ndarray, params: CanopyParams) -> tuple[np.ndarray, np.ndarray]:
@@ -96,9 +131,23 @@ def excess_green(rgb: np.ndarray, params: CanopyParams) -> tuple[np.ndarray, np.
     return excess, valid
 
 
+def lab_a_star(rgb: np.ndarray, params: CanopyParams) -> np.ndarray:
+    """CIELAB a* (D65) of 8-bit sRGB, smoothed like the index: green is negative, grey-brown shadow near 0."""
+    c = rgb.astype(np.float32) / 255
+    c = np.where(c > 0.04045, ((c + 0.055) / 1.055) ** 2.4, c / 12.92)
+    x = (0.4124 * c[0] + 0.3576 * c[1] + 0.1805 * c[2]) / 0.9505
+    y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    f = lambda t: np.where(t > 0.008856, np.cbrt(t), 7.787 * t + 16 / 116)
+    a = 500 * (f(x) - f(y))
+    return ndimage.gaussian_filter(a, params.smooth_m / PIXEL_M) if params.smooth_m else a
+
+
 def green_mask(rgb: np.ndarray, params: CanopyParams) -> np.ndarray:
     excess, valid = excess_green(rgb, params)
-    return (excess > (params.green_dn or params.exg_min)) & valid
+    mask = excess > (params.green_dn or params.exg_min)
+    if params.lab_a:
+        mask |= lab_a_star(rgb, params) < params.lab_a
+    return mask & valid
 
 
 def read_rgb(tile: Tile) -> tuple[np.ndarray, Affine]:
@@ -131,10 +180,11 @@ def _split(labels: np.ndarray, count: int, along: np.ndarray, params: CanopyPara
         while pending:
             lo, hi = pending.pop()
             best = None
+            neck = params.long_neck if params.long_m and (hi - lo) * step > params.long_m else params.split_neck
             for i in range(lo + least, hi - least):
                 if width[i] <= width[i - 1] and width[i] <= width[i + 1]:
                     depth = width[i] / min(width[lo:i].max(), width[i + 1:hi].max())
-                    if depth < params.split_neck and (best is None or depth < best[0]):
+                    if depth < neck and (best is None or depth < best[0]):
                         best = (depth, i)
             if best:
                 cuts.append(best[1])
@@ -272,19 +322,66 @@ def close(mask: np.ndarray, radius_m: float) -> np.ndarray:
 
 
 def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], params: CanopyParams,
-                green: np.ndarray | None = None, spacing_m: float = 0.0) -> np.ndarray:
+                green: np.ndarray | None = None, spacing_m: float = 0.0, with_weak: bool = False) -> Any:
     """`green` replaces the colour threshold with another per-pixel canopy mask (a network's), same shape as a band;
-    `spacing_m` goes to `kept_axes`."""
+    `spacing_m` goes to `kept_axes`. `with_weak` also returns the weak-stretch pixels (`_weak`) for `canopy_polygons`."""
     excess, valid = excess_green(rgb, params)
-    green = ((excess > (params.green_dn or params.exg_min)) if green is None else green) & valid
-    band = tube(kept_axes(axes, green, transform, params, spacing_m, excess), transform, green.shape, params.tube_m)
+    green = (green_mask(rgb, params) if green is None else green) & valid
+    kept = kept_axes(axes, green, transform, params, spacing_m, excess)
+    band = tube(kept, transform, green.shape, params.tube_m)
     if params.otsu and band.any():
         green = (excess > otsu(excess[band & valid])) & valid
     mask = green & band
+    weak = _weak(mask, kept, green, excess, valid, transform, params) if params.weak_dn and params.green_dn else None
+    if weak is not None:
+        mask |= weak
     if params.close_m:
         mask = close(mask, params.close_m) & band
     mask = ndimage.binary_fill_holes(mask)
-    return _drop_grass_strips(mask, rgb, transform, axes, params) if params.strip_gr and axes else mask
+    if weak is not None and params.weak_max_m and kept:
+        mask = _drop_weak_strips(mask, weak, kept, params)
+    mask = _drop_grass_strips(mask, rgb, transform, axes, params) if params.strip_gr and axes else mask
+    return (mask, weak if weak is not None else np.zeros_like(mask)) if with_weak else mask
+
+
+def _weak(mask: np.ndarray, axes: list[LineString], green: np.ndarray, excess: np.ndarray, valid: np.ndarray,
+          transform: Affine, params: CanopyParams) -> np.ndarray:
+    """The pixels to add along each axis: per `weak_window_m` stretch whose tube is under `weak_share` canopy colour,
+    those whose 2g - r - b is above `weak_dn` (a weak, young or dark-leaved stretch of row; the full threshold keeps
+    shadow and weeds out elsewhere)."""
+    out = np.zeros_like(mask)
+    for axis in axes:
+        rows, cols = _pixels(axis.buffer(params.tube_m, cap_style="flat"), transform, mask.shape)
+        if not len(rows):
+            continue
+        (x0, y0), (x1, y1) = axis.coords[0], axis.coords[-1]
+        d = np.array([x1 - x0, y1 - y0]) / axis.length
+        u = (transform.c + (cols + 0.5) * transform.a - x0) * d[0] + (transform.f + (rows + 0.5) * transform.e - y0) * d[1]
+        window = np.floor(u / params.weak_window_m).astype(int)
+        window -= window.min()
+        share = np.bincount(window, weights=green[rows, cols]) / np.maximum(np.bincount(window), 1)
+        low = (share[window] < params.weak_share) & (excess[rows, cols] > params.weak_dn) & valid[rows, cols]
+        out[rows[low], cols[low]] = True
+    return out & ~mask
+
+
+def _drop_weak_strips(mask: np.ndarray, weak: np.ndarray, axes: list[LineString], params: CanopyParams) -> np.ndarray:
+    """Removes the weak pixels of 8-connected pieces that are mostly weak and longer than `weak_max_m` along the row:
+    young or weak vines are separate small plants (at most about 2.5 m), a long faint strip is grass or soil along the tube."""
+    labels, count = ndimage.label(mask, EIGHT)
+    if not count:
+        return mask
+    longest = max(axes, key=lambda axis: axis.length)
+    (x0, y0), (x1, y1) = longest.coords[0], longest.coords[-1]
+    dx, dy = (x1 - x0) / longest.length, (y1 - y0) / longest.length
+    rows, cols = np.nonzero(mask)
+    lab = labels[rows, cols]
+    index = np.arange(1, count + 1)
+    u = (cols * dx - rows * dy) * PIXEL_M
+    length = np.asarray(ndimage.maximum(u, lab, index)) - np.asarray(ndimage.minimum(u, lab, index))
+    share = np.bincount(lab, weights=weak[rows, cols], minlength=count + 1)[1:] / np.maximum(np.bincount(lab, minlength=count + 1)[1:], 1)
+    drop = np.concatenate([[False], (share > 0.5) & (length > params.weak_max_m)])
+    return mask & ~(drop[labels] & weak)
 
 
 def _drop_grass_strips(mask: np.ndarray, rgb: np.ndarray, transform: Affine, axes: list[LineString], params: CanopyParams) -> np.ndarray:
@@ -332,24 +429,100 @@ def min_area(labels: np.ndarray, params: CanopyParams) -> float:
     return params.young_m2 if young else params.min_area_m2
 
 
-def canopy_polygons(mask: np.ndarray, transform: Affine, angle_deg: float, params: CanopyParams) -> list[Polygon]:
+def row_minimum(labels: np.ndarray, transform: Affine, angle_deg: float, params: CanopyParams, minimum: float) -> np.ndarray:
+    """Per-label minimum area: `minimum`, or `young_m2` for the pieces of a row whose median piece (of at least
+    `young_m2`, at least `row_young` of them) is under `min_area_m2`: the plot-level young rule, per row. A weak or
+    replanted row in a mature block holds plants of 0.05-0.2 m2 that the plot's median doesn't see. Rows are the pieces'
+    across-row positions, split where consecutive positions are over 0.5 m apart (rows are at least 2 m apart)."""
+    count = int(labels.max())
+    out = np.full(count + 1, minimum)
+    if not params.row_young or minimum <= params.young_m2 or not count:
+        return out
+    rows, cols = np.nonzero(labels)
+    index = labels[rows, cols]
+    pixels = np.bincount(index, minlength=count + 1).astype(float)
+    a = np.radians(angle_deg)
+    across = ((cols + 0.5) * transform.a * -np.sin(a) + (rows + 0.5) * transform.e * np.cos(a)).astype(float)
+    across = np.bincount(index, weights=across, minlength=count + 1) / np.maximum(pixels, 1)
+    sizes = pixels * PIXEL_M**2
+    ids = np.flatnonzero(sizes >= params.young_m2)
+    ids = ids[np.argsort(across[ids])]
+    for group in np.split(ids, np.flatnonzero(np.diff(across[ids]) > 0.5) + 1):
+        if len(group) >= params.row_young and float(np.median(sizes[group])) < params.min_area_m2:
+            out[group] = params.young_m2
+    return out
+
+
+def canopy_polygons(mask: np.ndarray, transform: Affine, angle_deg: float, params: CanopyParams,
+                    weak: np.ndarray | None = None) -> list[Polygon]:
     labels, count = ndimage.label(mask, EIGHT)
     if params.split_neck and count:
         labels, count = _split(labels, count, _along(transform, mask.shape, angle_deg), params)
-    minimum = min_area(labels, params)
-    labels[np.bincount(labels.ravel())[labels] * PIXEL_M**2 < minimum] = 0
+    minimum = row_minimum(labels, transform, angle_deg, params, min_area(labels, params))
+    if params.tuft_m2 and weak is not None and count:
+        share = np.bincount(labels.ravel(), weights=weak.ravel(), minlength=count + 1) / np.maximum(np.bincount(labels.ravel(), minlength=count + 1), 1)
+        minimum = np.where(share > 0.5, np.minimum(minimum, params.tuft_m2), minimum)
+    labels[np.bincount(labels.ravel())[labels] * PIXEL_M**2 < minimum[labels]] = 0
     parts: dict[int, list[BaseGeometry]] = {}
     for geometry, value in shapes(labels.astype(np.int32), mask=labels > 0, connectivity=8, transform=transform):
         parts.setdefault(int(value), []).append(shape(geometry))
     largest = lambda g: max((p for p in getattr(g, "geoms", [g]) if p.geom_type == "Polygon"), key=lambda p: p.area, default=None)
     polygons = []
-    for pieces in parts.values():
+    for value, pieces in parts.items():
+        if params.all_parts:
+            polygons += _parts(pieces, float(minimum[value]), params)
+            continue
         best = largest(make_valid(max(pieces, key=lambda p: p.area).simplify(params.simplify_m)))
-        if best is not None and best.area >= minimum:
+        if best is not None and best.area >= minimum[value]:
             best = largest(make_valid(Polygon(best.exterior).buffer(-params.inset_m, join_style="mitre"))) if params.inset_m else best
             if best is not None:
                 polygons.append(Polygon(best.exterior))
     return polygons
+
+
+def _parts(pieces: list[Polygon], minimum: float, params: CanopyParams) -> list[Polygon]:
+    """One label's outline, simplified and inset. A ring traced from 8-connected pixels touches itself at diagonal steps,
+    so make_valid splits it into parts, and the inset cuts it at necks under 2 cm; keeping only the largest part dropped
+    whole stretches (10 of 28 m2 of one hedge on r033_c019). Parts are re-joined by 1 mm; when the inset still splits
+    the polygon it stays un-inset, one instance; parts that stay apart are kept if at least `minimum`."""
+    parts = [p for p in _polygons(make_valid(unary_union([make_valid(p) for p in pieces]).simplify(params.simplify_m))) if p.area >= SLIVER_M2]
+    if len(parts) > 1:
+        joined = _polygons(unary_union(parts).buffer(0.001, join_style="mitre"))
+        parts = joined if len(joined) == 1 else parts
+    out = []
+    for part in parts:
+        part = Polygon(part.exterior)
+        if part.area < minimum:
+            continue
+        inset = [p for p in _polygons(make_valid(part.buffer(-params.inset_m, join_style="mitre"))) if p.area >= SLIVER_M2] if params.inset_m else [part]
+        out.append(Polygon(inset[0].exterior) if len(inset) == 1 else part)
+    return out
+
+
+def length_m(geometry: BaseGeometry) -> float:
+    """Long side of the minimum rotated rectangle."""
+    corners = np.asarray(geometry.minimum_rotated_rectangle.exterior.coords)
+    return float(max(np.hypot(*(corners[1] - corners[0])), np.hypot(*(corners[2] - corners[1]))))
+
+
+def in_vegetation(polygon: Polygon, rgb: np.ndarray, transform: Affine, params: CanopyParams) -> bool:
+    """True for a piece longer than `veg_m` that is bluish-green itself (mean g - r over `veg_gr` DN) and stands in green
+    (over `veg_ring` of the pixels 0.35-0.9 m around it have 2g - r - b over `green_dn`) that is bluish-green too (their
+    mean g - r over `veg_ring_gr`): a strip the tube cut out of a tree or shrub crown or lush weeds. Vine leaves in this
+    flight are yellow-green and the rows stand in soil or dry grass."""
+    if not params.veg_gr or length_m(polygon) <= params.veg_m:
+        return False
+    rows, cols = _pixels(polygon, transform, rgb.shape[1:])
+    if not len(rows) or float(np.mean(rgb[1, rows, cols].astype(np.float32) - rgb[0, rows, cols])) <= params.veg_gr:
+        return False
+    rows, cols = _pixels(polygon.buffer(VEG_RING_M[1]).difference(polygon.buffer(VEG_RING_M[0])), transform, rgb.shape[1:])
+    red, green, blue = rgb[:, rows, cols].astype(np.float32)
+    lush = 2 * green - red - blue > (params.green_dn or 25.0)
+    return bool(lush.mean() > params.veg_ring and float(np.mean(green[lush] - red[lush])) > params.veg_ring_gr) if lush.any() else False
+
+
+def _polygons(geometry: BaseGeometry) -> list[Polygon]:
+    return [p for p in getattr(geometry, "geoms", [geometry]) if p.geom_type == "Polygon" and not p.is_empty]
 
 
 @dataclass(frozen=True)
@@ -379,7 +552,119 @@ def tile_canopies(tile: Tile, rows: list[RowSet], params: CanopyParams = CanopyP
     if not crossing:
         return []
     image, transform = rgb or read_rgb(tile)
-    return [{"type": "Feature", "geometry": mapping(polygon),
-             "properties": {"label": "vineyard", "source": "prediction", "vineyard_id": plot.vineyard_id}}
-            for plot, axes in crossing
-            for polygon in canopy_polygons(canopy_mask(image, transform, axes, params, green, row_spacing(plot.axes)), transform, plot.angle_deg, params)]
+    out = []
+    for plot, axes in crossing:
+        mask, weak = canopy_mask(image, transform, axes, params, green, row_spacing(plot.axes), with_weak=True)
+        out += [{"type": "Feature", "geometry": mapping(polygon),
+                 "properties": {"label": "vineyard", "source": "prediction", "vineyard_id": plot.vineyard_id}}
+                for polygon in canopy_polygons(mask, transform, plot.angle_deg, params, weak) if not in_vegetation(polygon, image, transform, params)]
+    return out
+
+
+def _canopy_points(polygons: list[BaseGeometry], origin: np.ndarray, d: np.ndarray, bin_m: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The polygons cut into `bin_m` slices along the rows: each slice's centroid (u along `d`, v across, in metres from
+    `origin`) and area."""
+    if not polygons:
+        return np.zeros(0), np.zeros(0), np.zeros(0)
+    n = np.array([-d[1], d[0]])
+    local = shapely.transform(np.array(polygons, dtype=object), lambda xy: np.column_stack([(xy - origin) @ d, (xy - origin) @ n]))
+    bounds = shapely.bounds(local)
+    k0, k1 = np.floor(bounds[:, 0] / bin_m).astype(int), np.floor(bounds[:, 2] / bin_m).astype(int)
+    count = k1 - k0 + 1
+    index = np.repeat(np.arange(len(local)), count)
+    k = k0[index] + np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
+    slices = shapely.intersection(local[index], shapely.box(k * bin_m, bounds[index, 1] - 1, (k + 1) * bin_m, bounds[index, 3] + 1))
+    area = shapely.area(slices)
+    keep = area > 0
+    centre = shapely.centroid(slices[keep])
+    return shapely.get_x(centre), shapely.get_y(centre), area[keep]
+
+
+def refit_rows(features: list[dict[str, Any]], canopies: list[dict[str, Any]], reach_m: float = 0.8, bin_m: float = 0.5,
+               min_cover_m: float = 3.0, min_share: float = 0.2, clip_m: float = 0.15, gap_share: float = 0.4,
+               per_row: bool = False, min_span_m: float = 10.0) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The `row` features of `marcaj.plots.detect_plots` moved onto the canopy polygons, and a record per row.
+
+    Per row pattern (`pattern_id`, else `vineyard_id`): its lattice rows are parallel, so the pattern gets one angle
+    correction and each row its own offset, a weighted least-squares fit of the across-row position of the canopy slices
+    (`_canopy_points`, `bin_m` along the row, weighted by area) assigned to the nearest lattice row within `reach_m`,
+    re-fitted on the slices within 0.3 m and then `clip_m` of the fit. A row with canopy-covered bins over less than
+    `min_cover_m` or `min_share` of its length keeps its lattice offset (turned with the pattern). A row whose move would
+    bring it closer than (1 - `gap_share`) or farther than (1 + `gap_share`) of its lattice distance to a neighbour goes
+    back to its lattice offset, largest move first. `per_row` also fits each row's own angle (where its canopy spans
+    `min_span_m`): closer to the vines, but `rows.interrow_areas` builds all inter-rows of a pattern along one direction,
+    so it needs parallel rows.
+    The rows keep their extent, direction, IDs and properties; everything else passes through."""
+    pattern = lambda properties: properties.get("pattern_id") or properties.get("vineyard_id", "")  # one row lattice (plots.py)
+    by_plot: dict[str, list[int]] = {}
+    for i, feature in enumerate(features):
+        if feature["properties"]["label"] == "row":
+            by_plot.setdefault(pattern(feature["properties"]), []).append(i)
+    polygons: dict[str, list[BaseGeometry]] = {}
+    for feature in canopies:
+        polygons.setdefault(pattern(feature["properties"]), []).append(shape(feature["geometry"]))
+    out, records = list(features), []
+    for plot_id, indices in by_plot.items():
+        lines = [np.asarray(features[i]["geometry"]["coordinates"], float)[[0, -1]] for i in indices]
+        origin = lines[0][0]
+        d = (lines[0][1] - lines[0][0]) / np.linalg.norm(lines[0][1] - lines[0][0])
+        n = np.array([-d[1], d[0]])
+        ends = np.array([np.sort((line - origin) @ d) for line in lines])
+        v_row = np.array([float(np.mean((line - origin) @ n)) for line in lines])
+        u, v, w = _canopy_points(polygons.get(plot_id, []), origin, d, bin_m)
+        inside = (u[:, None] >= ends[:, 0] - bin_m) & (u[:, None] <= ends[:, 1] + bin_m)
+        distance = np.where(inside, np.abs(v[:, None] - v_row), np.inf)
+        nearest = np.argmin(distance, axis=1) if len(u) else np.zeros(0, int)
+        near = distance[np.arange(len(u)), nearest] <= reach_m if len(u) else np.zeros(0, bool)
+        r = v - v_row[nearest] if len(u) else v
+        cover = np.array([len(np.unique(np.floor(u[near & (nearest == k)] / bin_m))) * bin_m for k in range(len(lines))])
+        supported = cover >= np.maximum(min_cover_m, min_share * (ends[:, 1] - ends[:, 0]))
+        offset, centre, slope = np.zeros(len(lines)), ends.mean(axis=1), np.zeros(len(lines))
+        use = near & supported[nearest] if len(u) else near
+        for limit in (reach_m, 0.3, clip_m, clip_m):
+            inlier = use & (np.abs(r - offset[nearest] - slope[nearest] * (u - centre[nearest])) <= limit) if len(u) else use
+            k, weight = nearest[inlier], w[inlier]
+            total = np.bincount(k, weights=weight, minlength=len(lines))
+            ok = total > 0
+            centre = np.where(ok, np.bincount(k, weights=weight * u[inlier], minlength=len(lines)) / np.maximum(total, 1e-9), centre)
+            mean_r = np.bincount(k, weights=weight * r[inlier], minlength=len(lines)) / np.maximum(total, 1e-9)
+            du = u[inlier] - centre[k]
+            sxx = np.bincount(k, weights=weight * du * du, minlength=len(lines))
+            sxy = np.bincount(k, weights=weight * du * (r[inlier] - mean_r[k]), minlength=len(lines))
+            shared = float(sxy.sum() / sxx.sum()) if sxx.sum() > 1e-6 else 0.0
+            span = np.zeros(len(lines))
+            if inlier.any():
+                np.maximum.at(span, k, u[inlier])
+                low = np.full(len(lines), np.inf)
+                np.minimum.at(low, k, u[inlier])
+                span = np.where(ok, span - low, 0.0)
+            slope = np.where((span >= min_span_m) & (sxx > 1e-6), sxy / np.maximum(sxx, 1e-9), shared) if per_row else np.full(len(lines), shared)
+            offset = np.where(ok & supported, mean_r, 0.0)
+        moved = supported & (total > 0)
+        shift = lambda k, at: offset[k] + slope[k] * (at - centre[k]) if moved[k] else shared * (at - centre[k])
+        order = np.argsort(v_row)
+        reverted = np.zeros(len(lines), bool)
+        for _ in range(len(lines)):
+            bad = []
+            for a, b in zip(order[:-1], order[1:]):
+                lattice = v_row[b] - v_row[a]
+                lo, hi = max(ends[a, 0], ends[b, 0]), min(ends[a, 1], ends[b, 1])
+                if hi <= lo or lattice <= 0:
+                    continue
+                gaps = [lattice + shift(b, at) - shift(a, at) for at in (lo, hi)]
+                if min(gaps) < (1 - gap_share) * lattice or max(gaps) > (1 + gap_share) * lattice:
+                    bad.append(max((a, b), key=lambda k: abs(offset[k]) if moved[k] else -1.0))
+            bad = [k for k in bad if moved[k]]
+            if not bad:
+                break
+            worst = max(bad, key=lambda k: abs(offset[k]))
+            moved[worst], reverted[worst] = False, True
+        for k, i in enumerate(indices):
+            s0, s1 = shift(k, ends[k, 0]), shift(k, ends[k, 1])
+            a, b = origin + d * ends[k, 0] + n * (v_row[k] + s0), origin + d * ends[k, 1] + n * (v_row[k] + s1)
+            out[i] = {**features[i], "geometry": mapping(LineString([a, b] if (lines[k][1] - lines[k][0]) @ d > 0 else [b, a]))}
+            records.append({"row_id": features[i]["properties"]["row_id"], "vineyard_id": plot_id, "length_m": float(ends[k, 1] - ends[k, 0]),
+                            "cover_m": float(cover[k]), "moved": bool(moved[k]), "reverted": bool(reverted[k]),
+                            "shift_start_m": float(s0), "shift_end_m": float(s1),
+                            "turn_deg": float(np.degrees(np.arctan(slope[k] if moved[k] else shared)))})
+    return out, records

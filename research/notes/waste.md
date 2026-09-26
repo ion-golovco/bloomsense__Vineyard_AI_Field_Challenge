@@ -3,6 +3,64 @@
 26 September 2026. Everything below was measured on the 311 tiles. The verdicts ("likely", "possible", "unsure", "not")
 are my own, from contact sheets and 5x zooms. No labelled Sireț3 waste exists, so no number here is an accuracy.
 
+## Site-wide detector, rule flags (18:50)
+
+The rules (section 3) box litter "anywhere on the tile" and list the confounders: tubes, stakes, posts, wires,
+hoses, stones, bare or pale soil, flowering shrubs, pruning residue, vehicles and machinery. `marcaj.waste` now scans
+all 311 tiles: inter-row blobs exactly as before, plus the rest of each tile with the site-wide v1 surroundings tests
+(pale structures, ring green, density, 10 m from the organizers' building zones). 228,726 candidates in 40-140 s with
+6 processes. `vineyard_id` follows the 10 m rule against the v4 blocks. `WasteParams(scope="interrow")` is the old rule.
+
+**Verifier outside the inter-rows:** white, 0.03-1.5 m2, clipped share >= 0.1, chroma <= 20, textured, ring green
+>= 0.5, no pale structure, >= 10 m from buildings; luminance >= 225, density <= 0.03, >= 1.5 m from a row far from the
+blocks; luminance >= 220, density <= 0.10, >= 1.2 m from a row in a block or within 10 m of one. Blue as in v1.
+
+**Evaluation** (`research/review/eval_waste.py`, in-sample): 485 labelled objects, the user's 72 waste and 327 not
+waste answers plus the earlier eye verdicts (10 likely, 76 not).
+
+| Verifier | Boxes | Labelled waste | Labelled not | Unlabelled | Recall, all | Recall, rule-conform |
+|---|---|---|---|---|---|---|
+| inter-rows only (before) | 11 | 7 | 2 | 2 | 7/82 | 7/49 |
+| site-wide, v1 outside tests | 29 | 13 | 5 | 11 | 13/82 | 13/49 |
+| site-wide (now) | 60 | 23 | 5 | 32 | 22/82 | 22/49 |
+
+"Rule-conform" leaves out the 33 of the user's 72 waste answers whose card carries rule flags. Boxes by location:
+interrow 11, block 3, headland 17, outside 29 (the last with an empty `vineyard_id`). Control: 0 boxes on the two
+example tiles. Output: `data/generated/work/waste/waste_sitewide.geojson`.
+
+**Rule flags** (`research/review/build.py rule_flags`, shown on each card): tiny scrap under 0.02 m2; dark blob; large
+dull or tinted patch (>= 0.15 m2, luminance < 215 or chroma > 22, contrast < 170); not bright (luminance < 212,
+contrast < 170); low contrast (< 105); within 0.5 m of a row axis; long thin shape. 33 of the 72 waste answers are
+flagged (14 tiny, 13 not bright, 6 dull patches, 4 near a row, 3 low contrast, 1 dark). The answers are unchanged;
+`confirmed_rule_conform.csv` leaves the flagged ones out.
+
+**New cards:** 215 S-* cards (150 outside, 65 headland): every site-wide box not already a card, plus the best-scoring
+new candidates beyond 6 m of the blocks. Existing ids are unchanged.
+
+## Review tool and the small bright tier (13:50)
+
+**Review tool** (`research/review/`, launch `marcaj-review`, http://127.0.0.1:8010). `build.py` runs `waste.tile_candidates`
+over every predicted block plus a 6 m ring with no verifier: 108,030 blobs on 147 tiles in 18 s (6 processes), 62,556
+items after a 0.25 m dedupe (34,261 interrow, 16,182 block, 12,113 headland), all in
+`data/generated/work/waste/candidates_all.geojson`. Every checklist item and both accepted boxes were among them (35/35).
+The review set is the top 320 interrow, 100 block and 80 headland items by a ranking score plus every checklist item.
+Answers go to `data/review/verdicts.json` (object verdicts with `properties.review_tab`); confirmed waste is exported
+to `data/generated/work/waste/confirmed.csv`.
+
+**Small bright tier** in `waste.accept`: white blobs of 0.02-0.15 m2, luminance >= 220, chroma <= 20, distance >= 100,
+narrow spread >= 0.03 m, not a line, >= 0.55 m from a row axis. The strict tier missed the crumpled scraps because they
+are under 0.03 m2 or 0.55-0.9 m from a row. Measured with `research/review/eval_waste.py` on the user's labels plus the
+checklists' "likely" items (in-sample: the tier was set with these labels in view):
+
+| Verifier | Boxes | Labelled waste | Labelled not waste | Unlabelled | Inter-row recall |
+|---|---|---|---|---|---|
+| strict only (before) | 2 | 2 | 0 | 0 | 2/31 |
+| strict + small (now) | 11 | 9 | 1 | 1 | 9/31 |
+| small, luminance >= 215 | 19 | 10 | 5 | 4 | 10/31 |
+
+The remaining misses are white scraps at luminance 201-215, where the pale clods are too. Control: still 0 boxes on
+the two example tiles.
+
 ## Current detector: litter in the inter-rows only (10:20)
 
 The user decided "we only care inter-row". `waste.detect(tiles, predictions, data_dir, params)` keeps the same

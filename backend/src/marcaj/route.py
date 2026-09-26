@@ -20,25 +20,31 @@ is measured exactly against the robust space and checked with `routing.check_rou
 `routes_by_confidence` solves the site-wide route and one route per field (vineyard_id) for each POI confidence
 cutoff on one plan, warm-starting each cutoff from the others' tours."""
 
+import hashlib
 import json
 import math
+import pickle
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import shapely
 from rasterio.features import rasterize
 from rasterio.transform import Affine
 from scipy import ndimage
 from scipy.sparse import coo_matrix, csr_matrix
-from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.sparse.csgraph import dijkstra
+from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
 from shapely.ops import unary_union
 
 from marcaj.mosaic import load_mosaic
-from marcaj.routing import VISIT_RADIUS_M, _geometries, _length_in, check_route, check_spaces
-from marcaj.scene import is_scored
+from marcaj.routing import VISIT_RADIUS_M, YOUNG_CANOPY_M2, _geometries, _length_in, check_route, check_spaces
+from marcaj.scene import PREDICTION, is_scored, waste_id
+from marcaj.tiles import REPO_ROOT
 
 GRID_M = 0.5
 FINE = 3
@@ -57,6 +63,26 @@ MAX_CANDIDATES = 3
 DETOUR_LIMIT = 80.0
 UNDERCOUNT = 1.3  # sampled raster outside metres of an unmeasured leg, times this, against exact: 78 / 63 on the site
 MAX_ROUNDS = 8
+# Row hops: a walker may step across a vine row where it has no canopy, instead of going round the row end. A hop
+# joins the two lane cells HOP_REACH_M either side of the row axis, where a HOP_WIDTH_M wide corridor along the row
+# holds no canopy (and no forbidden zone), every HOP_STEP_M along each row. It costs its metres (outside passable
+# space at OUTSIDE_WEIGHT, like any other step) plus a penalty in equivalent metres, and its outside metres count
+# against the outside budget. On the site prediction (179 targets, closed from START): no hops 9,063 m and 126
+# visited; penalty 25: 8,650 m, 123, 26 hops; 50: 8,650 m, 125, 10 hops. Hops spend budget that headland access
+# would use, so marcaj-export keeps a hop route only where it is not worse than the route without.
+HOP_PENALTY_M = 50.0
+HOP_OUTSIDE_WEIGHT = OUTSIDE_WEIGHT
+HOP_REACH_M = 0.9
+HOP_WIDTH_M = 0.8
+HOP_STEP_M = 0.5
+HOP_ALIGN_M = 0.3  # gaps in consecutive rows line up for a straight multi-row crossing within this along the row
+HOP_MIN_STEP_M = 1.3  # longer than any grid step (1.12 m): a step this long in a path is a hop
+SNAP_M = 25.0  # a requested start or end snaps to the nearest passable cell within this distance
+OPEN_LINK = 1e6  # the dummy END -> START leg of an open route costs -OPEN_LINK, so every tour move keeps it
+PLAN_CACHE = REPO_ROOT / "data" / "generated" / "work" / "route" / "cache"
+PLAN_VERSION = 6  # bump when the grid, hops or matrices change, so cached plans are rebuilt
+DEV_WORLD_SHARE = 0.25
+PLAN_FILES = 3
 # (drow, dcol, cells the step passes through that must be walkable too)
 _STEPS = (
     (0, 1, ()), (1, 0, ()), (1, 1, ((1, 0), (0, 1))), (1, -1, ((1, 0), (0, -1))),
@@ -72,7 +98,10 @@ class Grid:
     cols: np.ndarray      # node -> grid column
     fine: np.ndarray      # (FINE h, FINE w) 1 where passable, at GRID_M / FINE
     cost: np.ndarray      # node -> cost per metre
-    graph: csr_matrix     # symmetric step costs
+    graph: csr_matrix     # symmetric step costs, row hops included
+    inside: np.ndarray = None     # node -> passable (cover >= 0.5)
+    hop_tier: dict = field(default_factory=dict)  # (node a, node b), a < b -> 1 over a gap, 2 over young canopy
+    hop_rows: dict = field(default_factory=dict)  # (node a, node b), a < b -> rows crossed, for multi-row crossings
 
     def xy(self, nodes: np.ndarray) -> np.ndarray:
         x, y = self.transform * (self.cols[nodes] + 0.5, self.rows[nodes] + 0.5)
@@ -115,8 +144,107 @@ def _visible(transform: Affine, shape_: tuple[int, int]) -> np.ndarray:
     return visible
 
 
-def build_grid(features: list[dict[str, Any]], space=None) -> Grid:
-    """The walkable grid over `space` (default `robust_space`). Site prediction: 3.5k × 3.6k cells, 1.5 M nodes, 2 s."""
+def _hop_edges(features: list[dict[str, Any]], grid: Grid, penalty: float, young_penalty: float | None,
+               rows_max: int = 1) -> tuple[np.ndarray, ...]:
+    """Row hops (a, b, cost, tier, rows crossed) between passable cells either side of a row axis: tier 1 where the
+    corridor holds no canopy, tier 2 (only with a `young_penalty`) where it holds only canopies under
+    YOUNG_CANOPY_M2. Never through a mature canopy or a forbidden zone. With `rows_max` > 1, single hops whose
+    gaps line up across consecutive rows (rows parallel within 6 degrees, gap centres within HOP_ALIGN_M along the
+    row) chain into one straight crossing of up to `rows_max` rows, allowed only where its whole corridor holds no
+    canopy; it costs `penalty` per row crossed."""
+    none = (np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0), np.zeros(0, np.int8), np.zeros(0, np.int8))
+    rows = [row for row in _geometries(features, "row") if row.length > HOP_STEP_M]
+    if not rows:
+        return none
+    lines = np.array(rows, dtype=object)
+    lengths = shapely.length(lines)
+    counts = (lengths / HOP_STEP_M).astype(int)
+    owner = np.repeat(np.arange(len(lines)), counts)
+    at = (np.concatenate([np.arange(count) for count in counts]) + 0.5) / counts[owner]
+    delta = 0.25 / lengths[owner]
+    point = shapely.get_coordinates(shapely.line_interpolate_point(lines[owner], at, normalized=True))
+    ahead = shapely.get_coordinates(shapely.line_interpolate_point(lines[owner], np.minimum(at + delta, 1), normalized=True))
+    behind = shapely.get_coordinates(shapely.line_interpolate_point(lines[owner], np.maximum(at - delta, 0), normalized=True))
+    tangent = (ahead - behind) / np.linalg.norm(ahead - behind, axis=1)[:, None]
+    normal = np.column_stack([-tangent[:, 1], tangent[:, 0]])
+
+    def cell(xy: np.ndarray) -> np.ndarray:
+        col, row = ~grid.transform * (xy[:, 0], xy[:, 1])
+        row, col = np.floor(row).astype(int), np.floor(col).astype(int)
+        ok = (row >= 0) & (row < grid.node.shape[0]) & (col >= 0) & (col < grid.node.shape[1])
+        nodes = np.full(len(xy), -1, np.int32)
+        nodes[ok] = grid.node[row[ok], col[ok]]
+        nodes[nodes >= 0] = np.where(grid.inside[nodes[nodes >= 0]], nodes[nodes >= 0], -1)
+        return nodes
+
+    row_tree = STRtree(rows)
+    canopies = _geometries(features, "vineyard")
+    canopy_tree = STRtree(canopies) if canopies else None
+    small_piece = shapely.area(np.array(canopies, dtype=object)) < YOUNG_CANOPY_M2 if canopies else np.zeros(0, bool)
+    forbidden = unary_union(_geometries(features, "forbidden"))
+
+    def clear(a: np.ndarray, b: np.ndarray, crossings: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Which straight edges a -> b cross exactly `crossings` rows through a corridor free of mature canopy and
+        forbidden zones; their tier and their cost without the penalty."""
+        segments = shapely.linestrings(np.stack([grid.xy(a), grid.xy(b)], axis=1))
+        crossed = np.bincount(row_tree.query(segments, predicate="intersects")[0], minlength=len(segments))
+        corridors = shapely.buffer(segments, HOP_WIDTH_M / 2, cap_style="flat")
+        mature, young = np.zeros(len(segments), bool), np.zeros(len(segments), bool)
+        if canopy_tree is not None:
+            hit, piece = canopy_tree.query(corridors, predicate="intersects")
+            mature[hit[~small_piece[piece]]] = True
+            young[hit[small_piece[piece]]] = True
+        blocked = shapely.intersects(corridors, forbidden) if not forbidden.is_empty else np.zeros(len(segments), bool)
+        tier = np.where(young, 2, 1).astype(np.int8)
+        keep = (crossed == crossings) & ~mature & ~blocked & ((tier == 1) | (young_penalty is not None and crossings == 1))
+        share = grid.outside(a, b)
+        return keep, tier, shapely.length(segments) * ((1 - share) + share * HOP_OUTSIDE_WEIGHT)
+
+    a, b = cell(point + HOP_REACH_M * normal), cell(point - HOP_REACH_M * normal)
+    ok = (a >= 0) & (b >= 0) & (a != b)
+    a, b, point, tangent, normal = a[ok], b[ok], point[ok], tangent[ok], normal[ok]
+    keep, tier, metres = clear(a, b, 1)
+    a, b, point, tangent, normal, tier, metres = a[keep], b[keep], point[keep], tangent[keep], normal[keep], tier[keep], metres[keep]
+    edges = [(a, b, metres + np.where(tier == 1, penalty, young_penalty or 0.0), tier, np.ones(a.size, np.int8))]
+    if rows_max > 1 and a.size:
+        from scipy.spatial import cKDTree
+        # single hops as oriented pieces: `near` -> `far`, both ways round
+        near, far = np.concatenate([a, b]), np.concatenate([b, a])
+        piece_point, piece_tangent = np.concatenate([point, point]), np.concatenate([tangent, tangent])
+        piece_dir = np.concatenate([-normal, normal])  # far - near is +normal for (b, a): a sits at +normal
+        tree = cKDTree(grid.xy(near))
+        level = (near, far, piece_point, piece_tangent, piece_dir)
+        for crossings in range(2, rows_max + 1):
+            start, end, last_point, last_tangent, direction = level
+            found = tree.query_ball_point(grid.xy(end), r=1.6)
+            first, second = [], []
+            for index, candidates in enumerate(found):
+                for candidate in candidates:
+                    if (np.dot(piece_dir[candidate], direction[index]) > 0.995
+                            and abs(np.dot(piece_point[candidate] - last_point[index], last_tangent[index])) <= HOP_ALIGN_M
+                            and np.dot(piece_point[candidate] - last_point[index], direction[index]) > 1.0):
+                        first.append(index)
+                        second.append(candidate)
+            if not first:
+                break
+            first, second = np.array(first), np.array(second)
+            chained = (start[first], far[second], piece_point[second], piece_tangent[second], piece_dir[second])
+            keep, _, metres = clear(chained[0], chained[1], crossings)
+            chained = tuple(item[keep] for item in chained)
+            edges.append((chained[0], chained[1], metres[keep] + crossings * penalty, np.ones(keep.sum(), np.int8),
+                          np.full(keep.sum(), crossings, np.int8)))
+            level = chained
+    a, b, cost, tier, crossed = (np.concatenate(items) for items in zip(*edges))
+    low, high = np.minimum(a, b), np.maximum(a, b)
+    order = np.lexsort((cost, high, low))
+    first = order[np.r_[True, (low[order][1:] != low[order][:-1]) | (high[order][1:] != high[order][:-1])]]
+    return low[first], high[first], cost[first], tier[first], crossed[first]
+
+
+def build_grid(features: list[dict[str, Any]], space=None, hop_penalty: float | None = None, young_penalty: float | None = None,
+               hop_rows: int = 1) -> Grid:
+    """The walkable grid over `space` (default `robust_space`), with row hops at `hop_penalty` equivalent metres
+    each when given (and over young canopy at `young_penalty`). Site prediction: 3.5k × 3.6k cells, 1.5 M nodes, 2 s."""
     space = robust_space(features) if space is None else space
     area = unary_union(_geometries(features, "study_area") or [space.envelope])
     left, bottom, right, top = area.bounds
@@ -134,10 +262,21 @@ def build_grid(features: list[dict[str, Any]], space=None) -> Grid:
     fine = rasterize([(space, 1)], out_shape=(shape_[0] * FINE, shape_[1] * FINE), transform=transform * Affine.scale(1 / FINE), dtype="uint8")
     cover = fine.reshape(shape_[0], FINE, shape_[1], FINE).mean(axis=(1, 3), dtype=np.float32)
     passable = cover >= 0.5
-    obstacles = burn([row.buffer(ROW_HALF_M, cap_style="flat") for row in _geometries(features, "row")] + _geometries(features, "vineyard"), True)
-    blocked = burn(_geometries(features, "forbidden"), True) | (obstacles & ~passable)
+    obstacles = burn([row.buffer(ROW_HALF_M, cap_style="flat") for row in _geometries(features, "row")], True)
+    # a canopy lying mostly in passable space (a reference canopy inside a passage) blocks every cell it touches:
+    # walking it at a high cost let a 0.5 m step clip 0.6 m of it. Canopies along a row that only graze passable space
+    # (at a lane mouth) stay walkable at the outside cost: blocking those cut the site route from 127 targets to 122
+    canopies = np.array(_geometries(features, "vineyard"), dtype=object)
+    shapely.prepare(space)
+    loose = np.zeros(len(canopies), bool)
+    touching = np.flatnonzero(shapely.intersects(canopies, space)) if len(canopies) else np.zeros(0, int)
+    if touching.size:
+        loose[touching] = shapely.area(shapely.intersection(canopies[touching], space)) >= 0.5 * shapely.area(canopies[touching])
+    canopy = burn(list(canopies[loose]), True)
+    obstacles |= burn(list(canopies), True)
+    blocked = burn(_geometries(features, "forbidden"), True) | canopy | (obstacles & ~passable)
     corridor = (ndimage.distance_transform_edt(~passable) * GRID_M <= CORRIDOR_M) & burn([area]) & ~blocked & _visible(transform, shape_)
-    walkable = passable | corridor
+    walkable = (passable & ~canopy) | corridor
     margin = ndimage.distance_transform_edt(passable) * GRID_M - GRID_M / 2
 
     flat = np.flatnonzero(walkable)
@@ -145,10 +284,10 @@ def build_grid(features: list[dict[str, Any]], space=None) -> Grid:
     node.flat[flat] = np.arange(flat.size, dtype=np.int32)
     rows, cols = np.divmod(flat, shape_[1])
     outside = 1 - cover.flat[flat]
-    # a canopy or row strip overlapping passable space stays walkable (it would cut lanes) but costs as much as outside
+    # a row strip or canopy edge overlapping passable space stays walkable (it would cut lanes) but costs as much as outside
     inside_cost = np.where(obstacles.flat[flat], OUTSIDE_WEIGHT, 1 + EDGE_PENALTY * np.clip((MARGIN_M - margin.flat[flat]) / MARGIN_M, 0, 1))
     cost = (1 - outside) * inside_cost + outside * OUTSIDE_WEIGHT
-    grid = Grid(transform, node, rows.astype(np.int32), cols.astype(np.int32), fine, cost, csr_matrix((flat.size, flat.size)))
+    grid = Grid(transform, node, rows.astype(np.int32), cols.astype(np.int32), fine, cost, csr_matrix((flat.size, flat.size)), passable.flat[flat])
 
     padded = np.pad(node, 2, constant_values=-1)
     h, w = shape_
@@ -167,6 +306,13 @@ def build_grid(features: list[dict[str, Any]], space=None) -> Grid:
         sources.append(a)
         targets.append(b)
         weights.append(math.hypot(dr, dc) * GRID_M * ((1 - share) * (inside_cost[a] + inside_cost[b]) / 2 + share * OUTSIDE_WEIGHT))
+    if hop_penalty is not None:
+        hop_a, hop_b, hop_cost, hop_tier, hop_crossed = _hop_edges(features, grid, hop_penalty, young_penalty, hop_rows)
+        sources.append(hop_a)
+        targets.append(hop_b)
+        weights.append(hop_cost)
+        grid.hop_tier = dict(zip(zip(hop_a.tolist(), hop_b.tolist()), hop_tier.tolist()))
+        grid.hop_rows = {pair: int(k) for pair, k in zip(zip(hop_a.tolist(), hop_b.tolist()), hop_crossed.tolist()) if k > 1}
     a, b, weight = np.concatenate(sources), np.concatenate(targets), np.concatenate(weights)
     grid.graph = coo_matrix((np.concatenate([weight, weight]), (np.concatenate([a, b]), np.concatenate([b, a]))), shape=(flat.size, flat.size)).tocsr()
     return grid
@@ -179,7 +325,7 @@ def route_target_features(features: list[dict[str, Any]]) -> list[dict[str, Any]
         geometry = shape(feature["geometry"])
         properties = feature["properties"]
         targets.append({
-            "id": str(properties.get("id") or f"{properties['label']}-{index:03d}"), "label": properties["label"],
+            "id": waste_id(feature) if properties["label"] == "waste" else str(properties.get("id") or f"{properties['label']}-{index:03d}"), "label": properties["label"],
             "point": geometry if geometry.geom_type == "Point" else geometry.centroid, "vineyard_id": properties.get("vineyard_id") or "",
         })
     return targets
@@ -207,6 +353,26 @@ def poi_targets(path: Path, confidence_over: float | None = None) -> list[dict[s
 def _cell(grid: Grid, point: Point) -> tuple[float, float]:
     col, row = ~grid.transform * (point.x, point.y)
     return row, col
+
+
+def snap(grid: Grid, point: Point, radius: float = SNAP_M) -> tuple[int, float] | None:
+    """The passable node nearest to `point` within `radius`, and its distance; None if there is none."""
+    row, col = _cell(grid, point)
+    reach = int(radius / GRID_M) + 1
+    r0, c0 = max(int(row) - reach, 0), max(int(col) - reach, 0)
+    r1, c1 = min(int(row) + reach + 1, grid.node.shape[0]), min(int(col) + reach + 1, grid.node.shape[1])
+    if r0 >= r1 or c0 >= c1:
+        return None
+    window = grid.node[r0:r1, c0:c1]
+    rr, cc = np.mgrid[r0:r1, c0:c1]
+    distance = np.hypot(rr + 0.5 - row, cc + 0.5 - col) * GRID_M
+    ok = window >= 0
+    ok[ok] = grid.inside[window[ok]]
+    distance[~ok] = np.inf
+    k = np.unravel_index(int(distance.argmin()), distance.shape)
+    if not distance[k] <= radius:
+        return None
+    return int(window[k]), float(distance[k])
 
 
 def _attach(grid: Grid, point: Point) -> list[int]:
@@ -321,20 +487,21 @@ def _tour(cost: np.ndarray, groups: list[np.ndarray]) -> np.ndarray:
         total = new_total
 
 
-def _drop(tour: np.ndarray, outside: np.ndarray, access: np.ndarray) -> tuple[list[int], float]:
+def _drop(tour: np.ndarray, outside: np.ndarray, access: np.ndarray, keep: int | None = None) -> tuple[list[int], float]:
     """Tour positions whose removal saves the most outside metres per target, and the saving: a single stop, or a
     whole run of consecutive stops that all need outside metres from START (e.g. a block behind a headland, where
-    dropping one stop saves nothing because the others still share the access)."""
+    dropping one stop saves nothing because the others still share the access). The `keep` stop (an open route's
+    END) is never dropped."""
     n = len(tour)
     runs, run = [], []
     for i in range(1, n + 1):
-        if i < n and access[tour[i]] > 0.3:
+        if i < n and access[tour[i]] > 0.3 and tour[i] != keep:
             run.append(i)
         else:
             runs += [run] if len(run) > 1 else []
             run = []
     best, best_ratio, best_saving = [], -np.inf, 0.0
-    for positions in [[i] for i in range(1, n)] + runs:
+    for positions in [[i] for i in range(1, n) if tour[i] != keep] + runs:
         i, j = positions[0], positions[-1]
         before, after = tour[i - 1], tour[(j + 1) % n]
         saving = outside[before, tour[i]] + outside[tour[i:j], tour[i + 1:j + 1]].sum() + outside[tour[j], after] - outside[before, after]
@@ -373,6 +540,14 @@ def _path(tree: np.ndarray, source: int, target: int) -> list[int]:
     return path[::-1]
 
 
+def _leg(plan: "Plan", a: int, b: int) -> list[int]:
+    """Grid nodes of the shortest path from stop a to stop b. A base stop's tree does not reach a stop added by
+    `with_endpoints`, so such a leg is that stop's path reversed (the graph is symmetric)."""
+    if b in plan.fresh and a not in plan.fresh:
+        return _path(plan.trees[b], plan.stops[b], plan.stops[a])[::-1]
+    return _path(plan.trees[a], plan.stops[a], plan.stops[b])
+
+
 @dataclass
 class Plan:
     """Everything the tour needs that does not depend on the outside budget: the grid, each target's candidate
@@ -395,11 +570,21 @@ class Plan:
     checks: dict = None           # routing.check_spaces of the features
     measured: np.ndarray = None  # (stops, stops) True where `outside` holds the exact metres of that leg
     walks: dict = None            # (stop, end index) -> legal out-and-back walk to a gap end, or None
+    end: Point | None = None      # an open route's END (None: the route returns to `start`)
+    end_stop: int | None = None   # END's stop index, the last stop
+    end_group: int | None = None  # END's group index, the last group
+    fresh: frozenset = frozenset()  # stops added by `with_endpoints`, whose trees reach every stop
+    hop_penalty: float | None = None
+    young_penalty: float | None = None
+    start_snap_m: float = 0.0
+    end_snap_m: float = 0.0
 
 
-def plan(features: list[dict[str, Any]], targets: list[dict[str, Any]] | None = None) -> Plan:
-    """Grid, stops and all-pairs matrices; 0.3 s per stop (one Dijkstra over 1.4 M nodes), 2 min for the 428 stops
-    of the site prediction's 220 targets."""
+def plan(features: list[dict[str, Any]], targets: list[dict[str, Any]] | None = None, hop_penalty: float | None = None,
+         young_penalty: float | None = None) -> Plan:
+    """Grid, stops and all-pairs matrices from the scene's START; 0.3 s per stop (one Dijkstra over 1.4 M nodes),
+    2 min for the 428 stops of the site prediction's 220 targets. `hop_penalty` (equivalent metres) enables row
+    hops, `young_penalty` also hops over young canopy. `with_endpoints` re-roots it at another start and end."""
     started = time.perf_counter()
     targets = route_target_features(features) if targets is None else targets
     starts = _geometries(features, "start")
@@ -407,7 +592,7 @@ def plan(features: list[dict[str, Any]], targets: list[dict[str, Any]] | None = 
         raise ValueError(f"Expected one start point, found {len(starts)}")
     start = starts[0]
     space = robust_space(features)
-    grid = build_grid(features, space)
+    grid = build_grid(features, space, hop_penalty, young_penalty)
     grid_s = time.perf_counter() - started
     row, col = _cell(grid, start)
     start_node = int(grid.node[int(row), int(col)])
@@ -439,7 +624,69 @@ def plan(features: list[dict[str, Any]], targets: list[dict[str, Any]] | None = 
         features, targets, space, grid, start, stops, groups, group_target,
         np.repeat(np.arange(len(groups)), [len(group) for group in groups]), cost, length, outside, trees, unreachable,
         {"grid_s": round(grid_s, 1), "matrix_s": round(time.perf_counter() - started - grid_s, 1)},
-        check_spaces(features), np.zeros((len(stops), len(stops)), bool), {},
+        check_spaces(features), np.zeros((len(stops), len(stops)), bool), {}, hop_penalty=hop_penalty, young_penalty=young_penalty,
+    )
+
+
+def _endpoint(grid: Grid, point: Point, name: str) -> tuple[int, Point, float]:
+    """The passable node a requested start or end snaps to, the point the line begins or ends at (the requested
+    point itself when it lies in that cell, else the cell centre), and the snap distance."""
+    snapped = snap(grid, point)
+    if snapped is None:
+        raise ValueError(f"The {name} point is more than {SNAP_M:.0f} m from any inter-row or passage")
+    node, _ = snapped
+    row, col = _cell(grid, point)
+    if (int(row), int(col)) == (int(grid.rows[node]), int(grid.cols[node])):
+        return node, point, 0.0
+    at = Point(grid.xy(np.array([node]))[0])
+    return node, at, point.distance(at)
+
+
+def with_endpoints(base: Plan, start: Point | None = None, end: Point | None = None) -> Plan:
+    """`base` re-rooted at `start` (default its START) and, when `end` snaps to another cell, opened into a path
+    start -> targets -> end: END becomes one more fixed stop whose leg back to START is a dummy costing -OPEN_LINK
+    (length and outside 0), so every tour move keeps the two adjacent and a closed tour over the stops is the open
+    path. One Dijkstra per new endpoint (0.3 s); the base's matrices are copied, not recomputed."""
+    grid = base.grid
+    start_node, start_at, start_snap = _endpoint(grid, start, "start") if start is not None else (base.stops[0], base.start, 0.0)
+    end_node, end_at, end_snap = _endpoint(grid, end, "end") if end is not None else (start_node, start_at, 0.0)
+    is_open = end_node != start_node
+    n0 = len(base.stops)
+    n = n0 + is_open
+    stops = [start_node] + base.stops[1:] + ([end_node] if is_open else [])
+    stops_array = np.array(stops)
+    matrices = []
+    for matrix, fill in ((base.cost, np.inf), (base.length, np.inf), (base.outside, np.inf), (base.measured, False)):
+        grown = np.full((n, n), fill, dtype=matrix.dtype)
+        grown[:n0, :n0] = matrix
+        matrices.append(grown)
+    cost, length, outside, measured = matrices
+    trees = list(base.trees) + ([None] if is_open else [])
+    fresh = ([0] if start is not None else []) + ([n - 1] if is_open else [])
+    for index in fresh:
+        dist, pred = dijkstra(grid.graph, indices=stops[index], return_predecessors=True)
+        cost[index] = cost[:, index] = dist[stops_array]
+        length[index], outside[index], trees[index] = _trace(grid, pred, stops[index], stops_array)
+        length[:, index], outside[:, index] = length[index], outside[index]
+        measured[index] = measured[:, index] = False
+    groups = list(base.groups) + ([np.array([n - 1])] if is_open else [])
+    group_target = list(base.group_target) + ([-1] if is_open else [])
+    unreachable = {index: reason for index, reason in base.unreachable.items() if reason != "no walkable connection to START"}
+    for group in range(1, len(base.groups)):
+        if base.group_target[group] not in unreachable and not np.isfinite(cost[0, groups[group]]).any():
+            unreachable[base.group_target[group]] = "no walkable connection to the start"
+    if is_open:
+        if not np.isfinite(cost[0, n - 1]):
+            raise ValueError("The end point is not connected to the start point by walkable space")
+        cost[0, n - 1] = cost[n - 1, 0] = -OPEN_LINK
+        length[0, n - 1] = length[n - 1, 0] = outside[0, n - 1] = outside[n - 1, 0] = 0.0
+        measured[0, n - 1] = measured[n - 1, 0] = True
+    return replace(
+        base, start=start_at, stops=stops, groups=groups, group_target=group_target,
+        group_of_stop=np.repeat(np.arange(len(groups)), [len(group) for group in groups]), cost=cost, length=length,
+        outside=outside, trees=trees, unreachable=unreachable, measured=measured,
+        end=end_at if is_open else None, end_stop=n - 1 if is_open else None, end_group=len(groups) - 1 if is_open else None,
+        fresh=frozenset(fresh), start_snap_m=start_snap, end_snap_m=end_snap if is_open else start_snap,
     )
 
 
@@ -502,16 +749,38 @@ def _add(plan: Plan, tour: np.ndarray, pool: list[int], budget: float, outside: 
     return tour, added
 
 
-def _target_rows(line: LineString, targets: list[dict[str, Any]], included: set[int], status: dict[int, str]) -> list[dict[str, Any]]:
+def _needs_outside(plan: "Plan", tour: list[int], index: int) -> float | None:
+    """Outside metres (of the planning space) that inserting target `index` at its cheapest place in `tour` adds,
+    exact where the legs are measured; None if it has no stop reachable from the tour."""
+    groups = [group for group, target in enumerate(plan.group_target) if target == index]
+    if not groups or len(tour) == 0:
+        return None
+    tour = np.asarray(tour)
+    stops = plan.groups[groups[0]]
+    extra, edge = _insertion(plan.cost, tour, stops)
+    best = int(np.argmin(extra))
+    if not np.isfinite(extra[best]):
+        return None
+    outside = plan.outside * np.where(plan.measured, 1.0, UNDERCOUNT)
+    a, b, stop = tour[edge[best]], np.roll(tour, -1)[edge[best]], stops[best]
+    return max(float(outside[a, stop] + outside[stop, b] - outside[a, b]), 0.0)
+
+
+def _target_rows(line: LineString, targets: list[dict[str, Any]], included: set[int], status: dict[int, str],
+                 plan: "Plan | None" = None, tour: list[int] | None = None) -> list[dict[str, Any]]:
+    """One row per included target: visited within 2 m, over_budget (with `needs_outside_m`, the outside metres
+    its cheapest insertion into `tour` would add), unreachable or missed, with its distance and the reason."""
     rows = []
     for index in sorted(included):
         target = targets[index]
         distance = line.distance(target["point"])
         reason = status.get(index, "")
+        state = "visited" if distance <= VISIT_RADIUS_M else "over_budget" if reason.startswith("over") else "unreachable" if reason else "missed"
+        needs = _needs_outside(plan, tour, index) if state == "over_budget" and plan is not None and tour is not None else None
         rows.append({
             "id": target["id"], "label": target["label"], "x": round(target["point"].x, 3), "y": round(target["point"].y, 3),
-            "status": "visited" if distance <= VISIT_RADIUS_M else "over_budget" if reason.startswith("over") else "unreachable" if reason else "missed",
-            "distance_m": round(distance, 2),
+            "status": state, "distance_m": round(distance, 2),
+            "needs_outside_m": "" if needs is None else round(needs, 1),
             "gap_ends_m": " ".join(f"{line.distance(end):.2f}" for end in target.get("ends", ())),
             "reason": reason,
         })
@@ -522,7 +791,7 @@ def _measure(plan: Plan, tour: np.ndarray) -> None:
     """Replace the raster outside metres of the tour's legs by their exact metres outside the planning space."""
     for a, b in zip(tour, np.roll(tour, -1)):
         if not plan.measured[a, b]:
-            nodes = _path(plan.trees[a], plan.stops[a], plan.stops[b])
+            nodes = _leg(plan, a, b)
             leg = LineString(plan.grid.xy(np.array(nodes))) if len(nodes) > 1 else None
             plan.outside[a, b] = plan.outside[b, a] = 0.0 if leg is None else max(leg.length - _length_in(leg, plan.space), 0.0)
             plan.measured[a, b] = plan.measured[b, a] = True
@@ -531,7 +800,8 @@ def _measure(plan: Plan, tour: np.ndarray) -> None:
 def route(plan: Plan, budget: float = OUTSIDE_BUDGET, include: set[int] | None = None, seed: list[int] | None = None,
           scale: float = UNDERCOUNT, build: bool = False) -> tuple[LineString, list[dict[str, Any]], dict[str, Any]]:
     """The closed tour over the planned targets (or the `include` indices of them) with at most `budget` of its
-    length outside `robust_space`, expanded to a line (plus legal walks past gap ends) and checked.
+    length outside `robust_space`, expanded to a line (plus legal walks past gap ends) and checked; for a plan
+    opened by `with_endpoints`, the path from its start to its END.
 
     Without a seed, every target starts in the tour and the drop step thins it to the budget; then `_add` puts
     back whatever still fits. `build` starts from START alone and lets `_add` build the whole tour. A `seed` (a
@@ -547,38 +817,46 @@ def route(plan: Plan, budget: float = OUTSIDE_BUDGET, include: set[int] | None =
     targets, cost, length = plan.targets, plan.cost, plan.length
     status = dict(plan.unreachable)
     candidates = [group for group in range(1, len(groups)) if plan.group_target[group] not in status and plan.group_target[group] in included]
+    fixed = [0] + ([plan.end_group] if plan.end_group is not None else [])
+    fixed_stops = [0] + ([plan.end_stop] if plan.end_stop is not None else [])
     if build:
-        seed = [0]
-    tour = None if seed is None else np.array([stop for stop in seed if stop == 0 or plan.group_target[int(plan.group_of_stop[stop])] in included])
-    active = candidates if tour is None else sorted({int(plan.group_of_stop[stop]) for stop in tour[1:]})
+        seed = fixed_stops
+    tour = None if seed is None else np.array([stop for stop in seed if stop in fixed_stops or plan.group_target[int(plan.group_of_stop[stop])] in included])
+    if tour is not None and plan.end_stop is not None and plan.end_stop not in tour:
+        tour = np.append(tour, plan.end_stop)
+    active = candidates if tour is None else sorted({int(plan.group_of_stop[stop]) for stop in tour} - set(fixed))
     for _ in range(MAX_ROUNDS):
         outside = plan.outside * np.where(plan.measured, 1.0, scale)
         if tour is None:
-            tour = _tour(cost, [groups[g] for g in [0] + active])
-        while len(tour) > 1:
+            tour = _tour(cost, [groups[g] for g in fixed + active])
+        while len(tour) > len(fixed):
             after = np.roll(tour, -1)
             if outside[tour, after].sum() <= budget * length[tour, after].sum():
                 break
-            positions, saving = _drop(tour, outside, outside[0])
+            positions, saving = _drop(tour, outside, outside[0], plan.end_stop)
             if saving < 0.1:  # outside metres that no removal saves (shared by all): build up from START instead
-                tour, active = np.array([0]), []
+                tour, active = np.array(fixed_stops), []
                 break
             for position in positions:
                 group = int(plan.group_of_stop[tour[position]])
                 status[plan.group_target[group]] = f"over the outside budget: dropping it{f' and {len(positions) - 1} more behind the same outside access' if len(positions) > 1 else ''} saves {saving:.1f} m outside passable space"
                 active.remove(group)
-            tour = _tour(cost, [groups[g] for g in [0] + active])
+            tour = _tour(cost, [groups[g] for g in fixed + active])
         tour, added = _add(plan, tour, [group for group in candidates if group not in active], budget, outside)
         for group in added:
             status.pop(plan.group_target[group], None)
         active = active + added
         tour = _or_opt(cost, _two_opt(cost, tour))
+        if plan.end_stop is not None and len(tour) > 2 and tour[1] == plan.end_stop:
+            tour = np.concatenate([tour[:1], tour[1:][::-1]])  # START, targets..., END; the dummy END -> START leg closes it
+        if plan.end_stop is not None and tour[-1] != plan.end_stop:
+            raise RuntimeError(f"open tour lost its END -> START link: END at position {list(tour).index(plan.end_stop)} of {len(tour)}")
         _measure(plan, tour)
         after = np.roll(tour, -1)
         route_length, route_outside = length[tour, after].sum(), plan.outside[tour, after].sum()
         nodes, at = [], []
-        for a, b in zip(tour, after):
-            leg = _path(plan.trees[a], stops[a], stops[b])
+        for a, b in zip(tour, after) if plan.end_stop is None else zip(tour[:-1], tour[1:]):
+            leg = _leg(plan, a, b)
             joined = bool(nodes) and nodes[-1] == leg[0]
             at.append(len(nodes) - 1 if joined else len(nodes))
             nodes.extend(leg[1:] if joined else leg)
@@ -591,23 +869,32 @@ def route(plan: Plan, budget: float = OUTSIDE_BUDGET, include: set[int] | None =
         for position in sorted(walks, reverse=True):
             for walk in walks[position]:
                 nodes[position + 1:position + 1] = walk[1:]
-        coords = [(start.x, start.y)] + [tuple(xy) for xy in grid.xy(np.array(nodes))] + [(start.x, start.y)]
+        end = start if plan.end is None else plan.end
+        coords = [(start.x, start.y)] + [tuple(xy) for xy in grid.xy(np.array(nodes))] + [(end.x, end.y)]
         line = LineString(coords).simplify(SIMPLIFY_M)
         robust_outside = line.length - _length_in(line, plan.space)
-        if robust_outside <= budget * line.length or len(tour) == 1:
+        if robust_outside <= budget * line.length or len(tour) == len(fixed):
             break
         scale *= 1.1  # the measured legs are exact now; unmeasured estimates were too low as well
     for group in candidates:
         if group not in active:
             status.setdefault(plan.group_target[group], "over the outside budget: not added")
-    report = check_route(line, plan.features, [targets[index]["point"] for index in sorted(included)], plan.checks)
+    report = check_route(line, plan.features, [targets[index]["point"] for index in sorted(included)], plan.checks, start, end)
+    steps = np.hypot(np.diff(grid.rows[nodes]), np.diff(grid.cols[nodes])) * GRID_M if len(nodes) > 1 else np.zeros(0)
+    hops = np.flatnonzero(steps > HOP_MIN_STEP_M)
+    pairs = [(min(nodes[i], nodes[i + 1]), max(nodes[i], nodes[i + 1])) for i in hops]
+    tiers = [grid.hop_tier.get(pair, 1) for pair in pairs]
     report.update({
         "robust_outside_m": robust_outside, "robust_outside_share": robust_outside / line.length, "budget": budget,
-        "tour_cost": float(cost[tour, np.roll(tour, -1)].sum()), "gap_walks": sum(len(items) for items in walks.values()),
+        "open": plan.end is not None, "hops": int(hops.size), "hop_m": float(steps[hops].sum()), "young_hops": sum(tier == 2 for tier in tiers),
+        "rows_crossed": sum(grid.hop_rows.get(pair, 1) for pair in pairs),
+        "hop_penalty": plan.hop_penalty, "start_snap_m": plan.start_snap_m, "end_snap_m": plan.end_snap_m,
+        "tour_cost": float(cost[tour, np.roll(tour, -1)].sum() + (OPEN_LINK if plan.end is not None else 0.0)),
+        "gap_walks": sum(len(items) for items in walks.values()),
         "grid_nodes": int(grid.rows.size), "stops": len(stops), "legs_outside_m": float(route_outside), "outside_scale": round(float(scale), 3),
         **plan.seconds, "tour_s": round(time.perf_counter() - started, 1), "tour": [int(stop) for stop in tour], "status": status,
     })
-    return line, _target_rows(line, targets, included, status), report
+    return line, _target_rows(line, targets, included, status, plan, report["tour"]), report
 
 
 def solve(features: list[dict[str, Any]], targets: list[dict[str, Any]] | None = None, budget: float = OUTSIDE_BUDGET) -> tuple[LineString, list[dict[str, Any]], dict[str, Any]]:
@@ -625,7 +912,12 @@ def _route_feature(cutoff: float | None, vineyard_id: str, line: LineString, row
         "over_budget": sum(item["status"] == "over_budget" for item in rows),
         "outside_share": round(report["outside_share"], 5), "robust_outside_share": round(report["robust_outside_share"], 5),
         "start_gap_m": round(report["start_gap_m"], 3), "end_gap_m": round(report["end_gap_m"], 3),
+        "hops": report["hops"], "hop_m": round(report["hop_m"], 2), "open": report["open"],
+        "forbidden_m": round(report["forbidden_m"], 3), "canopy_m": round(report["canopy_m"], 3),
+        "outside_budget_m": round(report["budget"] * line.length, 1), "robust_outside_m": round(report["robust_outside_m"], 1),
         "legal": bool(report["legal"]), "closed": bool(report["closed"]),
+        # per target: visited, over_budget (needs_outside_m: what reaching it would add outside the lanes) or unreachable
+        "target_status": [{key: item[key] for key in ("id", "status", "distance_m", "needs_outside_m", "reason")} for item in rows],
     }}
 
 
@@ -640,10 +932,11 @@ def _best_routes(prepared: Plan, includes: list[set[int]], budget: float) -> lis
         line = LineString(np.round(np.asarray(line.coords), 3))
         if borrowed:  # another set's line: its unvisited targets of this set were never offered to it
             status = status | {k: "over the outside budget: not added" for k in includes[index] - status.keys() if line.distance(targets[k]["point"]) > VISIT_RADIUS_M}
-        report = report | check_route(line, prepared.features, [targets[i]["point"] for i in sorted(includes[index])], prepared.checks)
+        report = report | check_route(line, prepared.features, [targets[i]["point"] for i in sorted(includes[index])], prepared.checks,
+                                      prepared.start, prepared.end)
         report["robust_outside_m"] = line.length - _length_in(line, prepared.space)
         report["robust_outside_share"] = report["robust_outside_m"] / line.length
-        rows = _target_rows(line, targets, includes[index], status)
+        rows = _target_rows(line, targets, includes[index], status, prepared, report["tour"])
         fits = report["legal"] and report["closed"] and report["robust_outside_share"] <= budget + 1e-9
         return (fits, report["visited"], -line.length), line, rows, report
 
@@ -672,14 +965,20 @@ def _best_routes(prepared: Plan, includes: list[set[int]], budget: float) -> lis
 
 
 def routes_by_confidence(features: list[dict[str, Any]], targets: list[dict[str, Any]], cutoffs: tuple[float | None, ...] = (None, 0.5, 0.7),
-                         budget: float = OUTSIDE_BUDGET, fields: bool = True) -> list[tuple[dict[str, Any], LineString, list[dict[str, Any]], dict[str, Any]]]:
+                         budget: float = OUTSIDE_BUDGET, fields: bool = True, hop_penalty: float | None = HOP_PENALTY_M,
+                         start: Point | None = None, end: Point | None = None,
+                         prepared: Plan | None = None) -> list[tuple[dict[str, Any], LineString, list[dict[str, Any]], dict[str, Any]]]:
     """One site-wide route per POI confidence cutoff (None: every target; waste and targets without a confidence
     always count), and with `fields` one per field (vineyard_id) and cutoff over that field's targets, all planned
     once and chosen by `_best_routes`. Site routes come first, in `cutoffs` order; the first is the submission.
     Each item: the client's route feature (label/source "route", scope "site" or "field", vineyard_id,
     min_confidence, length_m, targets, visited, unreachable, over_budget, outside shares, start/end gaps, legal,
-    closed), the line, the target rows and the full report."""
-    prepared = plan(features, targets)
+    closed, hops), the line, the target rows and the full report. Every route runs from `start` (default START) to
+    `end` (default back to its start), with row hops at `hop_penalty` (None: no hops); `prepared` is a ready plan
+    of these features and targets."""
+    prepared = plan(features, targets, hop_penalty) if prepared is None else prepared
+    if start is not None or end is not None:
+        prepared = with_endpoints(prepared, start, end)
     kept = [{index for index, target in enumerate(targets) if cutoff is None or target.get("confidence") is None or target["confidence"] >= cutoff}
             for cutoff in cutoffs]
     scopes = [("", kept)]
@@ -693,3 +992,86 @@ def routes_by_confidence(features: list[dict[str, Any]], targets: list[dict[str,
         for (cutoff, _), (_, line, rows, report) in zip(pairs, _best_routes(prepared, [include for _, include in pairs], budget)):
             result.append((_route_feature(cutoff, vineyard_id, line, rows, report), line, rows, report))
     return result
+
+
+def planning_features(scene: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    """The world an on-request route plans on, and its name: the scene's scored features ("scored"). A
+    development scene whose scored inter-rows are fewer than DEV_WORLD_SHARE of its predicted ones (the organizer
+    examples plus the site prediction, before the Marcaj export) plans on its predictions instead, relabelled
+    `dev`, plus the organizer features ("prediction"), as the client's routes do; submission files never do this."""
+    features = [item for item in scene["features"] if item["properties"].get("label") != "tile"]
+    interrows = [item for item in features if item["properties"].get("label") == "interrow_area"]
+    predicted = sum(item["properties"].get("source") == PREDICTION for item in interrows)
+    if len(interrows) - predicted >= DEV_WORLD_SHARE * predicted:
+        return [item for item in features if is_scored(item)], "scored"
+    # ponytail: a count rule, not a flag; once the Marcaj export is in the scene its scored inter-rows win
+    return [{**item, "properties": {**item["properties"], "source": "dev"}} if item["properties"].get("source") == PREDICTION else item
+            for item in features if item["properties"].get("source") in (PREDICTION, "organizer")], "prediction"
+
+
+def _plan_key(token: str, targets: list[dict[str, Any]], hop_penalty: float | None, young_penalty: float | None) -> str:
+    listed = [(item["id"], round(item["point"].x, 3), round(item["point"].y, 3), [(round(end.x, 3), round(end.y, 3)) for end in item.get("ends", ())])
+              for item in targets]
+    return hashlib.sha1(json.dumps([PLAN_VERSION, HOP_OUTSIDE_WEIGHT, token, hop_penalty, young_penalty, listed]).encode()).hexdigest()[:16]
+
+
+def cached_plan(features: list[dict[str, Any]], targets: list[dict[str, Any]], token: str, hop_penalty: float | None = HOP_PENALTY_M,
+                young_penalty: float | None = None, cache_dir: Path | None = PLAN_CACHE) -> Plan:
+    """`plan(features, targets, hop_penalty, young_penalty)`, pickled under `cache_dir` keyed by `token` (which must
+    change with the features, e.g. the scene file's path, size and mtime), the targets and the hop settings: the
+    2 min of Dijkstras run once per scene, a later load takes about a second."""
+    path = None if cache_dir is None else cache_dir / f"plan_{_plan_key(token, targets, hop_penalty, young_penalty)}.pkl"
+    if path is not None and path.is_file():
+        try:
+            with path.open("rb") as source:
+                packed, fine_shape, data, indices, indptr = pickle.load(source)
+        except (EOFError, TypeError, ValueError, pickle.UnpicklingError) as error:  # a partial or older file: plan again
+            print(f"ignoring unreadable plan cache {path.name}: {error}")
+        else:
+            if not hasattr(packed.grid, "hop_rows"):  # pickled before multi-row crossings; its hops are single-row
+                packed.grid.hop_rows = {}
+            graph = csr_matrix((data.astype(np.float64), indices, indptr), shape=(packed.grid.rows.size,) * 2)
+            fine = np.unpackbits(packed.grid.fine, count=fine_shape[0] * fine_shape[1]).reshape(fine_shape)
+            return replace(packed, features=features, grid=replace(packed.grid, fine=fine, graph=graph))
+    prepared = plan(features, targets, hop_penalty, young_penalty)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # the fine raster as bits and the step costs as float32 (a 1e-7 relative change): 250 MB on disk, not 490
+        grid = prepared.grid
+        packed = replace(prepared, features=None, grid=replace(grid, fine=np.packbits(grid.fine), graph=None))
+        partial = path.with_suffix(".partial")
+        with partial.open("wb") as output:
+            pickle.dump((packed, grid.fine.shape, grid.graph.data.astype(np.float32), grid.graph.indices, grid.graph.indptr), output,
+                        protocol=pickle.HIGHEST_PROTOCOL)
+        partial.replace(path)
+        for stale in sorted(path.parent.glob("plan_*.pkl"), key=lambda item: item.stat().st_mtime)[:-PLAN_FILES]:
+            stale.unlink()  # a plan is 250 MB: keep the newest few (hops on and off, one scene)
+    return prepared
+
+
+_PLANS: dict[str, Plan] = {}
+_LOCK = threading.Lock()
+
+
+def request_route(features: list[dict[str, Any]], targets: list[dict[str, Any]], token: str, start: Point | None = None, end: Point | None = None,
+                  include: set[int] | None = None, hop_penalty: float | None = HOP_PENALTY_M,
+                  budget: float = OUTSIDE_BUDGET) -> tuple[LineString, list[dict[str, Any]], dict[str, Any]]:
+    """One route on request from `start` (default START) to `end` (default back to its start) over the `include`
+    targets: the scene's plan comes from memory or `cached_plan`, so a request runs one Dijkstra per new endpoint
+    plus the tour. Legs measured exactly are written back to the shared plan. Raises ValueError for an endpoint
+    that snaps to no passable cell or an END not connected to the start."""
+    key = _plan_key(token, targets, hop_penalty, None)
+    with _LOCK:  # ponytail: one global lock, requests are solved one at a time; per-plan locks if several users matter
+        base = _PLANS.get(key)
+        if base is None:
+            base = cached_plan(features, targets, token, hop_penalty)
+            while len(_PLANS) >= 2:  # hops on and off for one scene
+                _PLANS.pop(next(iter(_PLANS)))
+            _PLANS[key] = base
+        view = with_endpoints(base, start, end)
+        line, rows, report = route(view, budget, include, build=True)
+        known = len(base.stops)
+        base.outside[1:known, 1:known] = view.outside[1:known, 1:known]
+        base.measured[1:known, 1:known] = view.measured[1:known, 1:known]
+    return line, rows, report
+

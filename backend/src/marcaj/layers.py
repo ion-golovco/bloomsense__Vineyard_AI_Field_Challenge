@@ -101,13 +101,16 @@ def compute_layers(rgb: np.ndarray, transform: Affine, smooth_m: float = 2.0, to
     )
 
 
-def load_layers(data_dir: Path = DATA_DIR, path: Path = LAYERS_PATH, refresh: bool = False) -> Layers:
+def load_layers(data_dir: Path = DATA_DIR, path: Path = LAYERS_PATH, refresh: bool = False, tophat_m: float | None = None) -> Layers:
+    """The cached layers; with `tophat_m`, the top-hat variant, cached beside the default under its own name."""
+    if tophat_m and path == LAYERS_PATH:
+        path = path.with_name(f"{path.stem}_tophat{tophat_m:g}.npz")
     if path.is_file() and not refresh:
         saved = np.load(path)
         return Layers(**{name: saved[name] for name in ("vine_over_orchard", "orchard_energy", "row_angle", "green_share", "valid")},
                       transform=Affine(*saved["transform"]))
     started = time.perf_counter()
-    layers = compute_layers(*load_mosaic(data_dir))
+    layers = compute_layers(*load_mosaic(data_dir), tophat_m=tophat_m)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, vine_over_orchard=layers.vine_over_orchard, orchard_energy=layers.orchard_energy,
                         row_angle=layers.row_angle, green_share=layers.green_share, valid=layers.valid,

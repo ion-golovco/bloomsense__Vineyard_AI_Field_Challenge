@@ -27,7 +27,7 @@ Scoring: canopies 25 · route 25 · rows + attributes 15 (axes 8, attributes 5, 
 
 Two separate front ends, one Python package.
 
-- **Client** (`web/`, Vite + Leaflet, served by `marcaj.api` on :8000): the pitch demo. It shows map, objects, IDs, measurements, route and rows, and **no tooling**. The API exposes only `/api/scene` and `/api/imagery/{z}/{x}/{y}.png`.
+- **Client** (`web/`, Vite + Leaflet, served by `marcaj.api` on :8000): the pitch demo. It shows map, objects, IDs, measurements, route and rows, and **no tooling**. The API exposes `/api/scene`, `/api/imagery/{z}/{x}/{y}.png`, `POST /api/route[/geojson]` and `GET /api/points` + `POST /api/points/{id}/status`. Two roles, picked in the page (`?role=farmer`, no auth): the inspector sees every field, point and score; a farmer (one field = one farmer) sees waste, optionally missing canopy, and plans an open-points walk.
 - **Lab** (`research/lab.ipynb` + `marcaj.lab`, Jupyter + ipyleaflet, the `lab` dependency group): review predictions over the imagery, record verdicts, re-run the model, re-judge.
 
 `backend/src/marcaj/`:
@@ -50,6 +50,7 @@ Two separate front ends, one Python package.
 | `review` | Verdict store at `data/review/verdicts.json` (tracked) |
 | `routing`, `route` | Organizer constraints, passable space, `check_route` (outside length summed per segment); the route solver on a 0.5 m grid with a 1.2% outside budget, one route per POI confidence cutoff |
 | `scene` | Scene loading (default `data/generated/scene.json`), measurements, the client payload |
+| `points` | App-only point status (append-only events in `data/app/point_status.json`, gitignored) and per-field farmer scores from open waste and missing canopy; `python -m marcaj.points` self-checks |
 | `export` | `route.geojson` (FeatureCollection with the organizers' `crs` member), `route_targets.csv`, `measurements.csv` and `data/generated/routes.geojson` |
 | `imagery` | Map tiles rendered from the source orthomosaic's overviews |
 | `api` | The client API |

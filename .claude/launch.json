@@ -50,6 +50,19 @@
         "--ServerApp.password="
       ],
       "port": 8888
+    },
+    {
+      "name": "marcaj-review",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "--directory",
+        "backend",
+        "run",
+        "--frozen",
+        "python",
+        "../research/review/server.py"
+      ],
+      "port": 8010
     }
   ]
 }

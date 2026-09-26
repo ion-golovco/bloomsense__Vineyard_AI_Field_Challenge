@@ -128,6 +128,35 @@ On the inter-rows agent's notes:
 4. **Blocks for `vineyard_id`.** The rules make touching pieces one block (#30's two legs, #32's two phases). This needs a group id applied at the end of `predict.py`, because `canopy.plot_rows` and `rows.interrow_areas` key rows by `vineyard_id` and would break if two plots shared one now.
 5. **User decisions:** A01 (mulch field), #38 (orchard or vineyard), and the passage-crossing #28 and #30.
 
+## 6. Verification by vine evidence (26 September, evening)
+
+`plots.verify_plots` runs in `predict.py` after the canopy and `refit_rows`, and before the inter-rows and waste, so those never see a dropped plot. It computes `plots.vine_evidence` per row pattern from the pipeline's own rows and canopies, applies `plots.looks_like_vineyard` to it, drops every block none of whose patterns passes (with the block's rows and canopies), and then regroups and renames the rest (`_blocks`, `_ids`). A weak pattern stays if another pattern in its block passes: V32-18a, for example, is the grassy north-west part of outline #10. Dropped plots are written beside the output as `dropped_plots.geojson`.
+
+The rule drops a pattern if any of these holds:
+- canopy covers less than `verify_cover` 0.25 of the row length;
+- the mosaic ExG on the rows minus the ExG halfway between them is under `verify_contrast` 0.015;
+- the median canopy piece is longer than `verify_vine_m` 4 m and the cover is under `verify_hedge` 0.5 (patchy scrub; a vine hedge is continuous).
+
+| pattern | m² | on vineyard outline | cover | rows with canopy | pieces / 10 m | median piece m | on − between ExG | result |
+|---|---|---|---|---|---|---|---|---|
+| V12-02 | 361 | 0 | 0.09 | 0.25 | 0.3 | 2.2 | 0.025 | dropped: scrub |
+| V28-25 | 209 | 0 | 0.00 | 0.00 | 0.0 | – | 0.019 | dropped: grass by a track |
+| V34-25 | 319 | 0 | 0.32 | 0.75 | 2.9 | 0.9 | 0.010 | dropped: weed strip in a tilled field |
+| V36-22 | 414 | 0 | 0.38–0.40 | 0.50 | 0.8 | 4.1–5.1 | 0.041 | dropped: scrub |
+| V22-15 | 630 | 0 | 0.33–0.39 | 0.60 | 2.0 | 1.3–1.5 | 0.125 | kept: a vine strip at an orchard edge |
+| V37-22 | 206 | 0 | 0.60 | 1.00 | 3.8 | 0.8 | 0.057 | kept: the user says it is a vineyard corner cut by the imagery edge |
+| V30-17 (#8), V31-17 (#9), V30-18 (#26) | 517–765 | 0.60–0.79 | 0.45 / 0.34 / 0.53–0.56 | 0.56–1.00 | 1.5–3.1 | 1.2–2.3 | 0.050–0.055 | kept (young strips) |
+| closest outlined vineyards | | | V32-18b 0.44, V29-23 0.47 | | | V37-25a 3.0–3.6 (cover 0.50–0.70) | V35-25 0.033 | kept |
+
+Where a cell shows a range, the two values come from canopy.py at 16:10 and at 16:26; the other agent was changing it in between.
+
+Results against the outlines as of 16:40:
+- North: F1@0.5 0.927 → 0.974, F1@0.75 0.634 → 0.667, false area 5,457 → 4,887 m².
+- South: F1@0.5 0.824 → 0.875, F1@0.75 0.471 → 0.500, area IoU 0.751 → 0.765, false area 2,942 → 2,209 m².
+- The judge on the reference tiles is unchanged at 44.87.
+
+In the review tool, the Plots tab's list "Predicted plots without an outline" shows each such block's evidence and the rule's decision, and takes Vineyard / Not a vineyard / Unsure answers. These are object verdicts on the block; they follow the block from run to run by IoU ≥ 0.5. Probes: `plots_verify_evidence.py` (per-pattern table with outline overlap and answers), `plots_verify_eval.py` (before/after plot scores) and `plots_verify_sheet.py` (5 cm crops). Outputs are in `data/generated/work/plots_verify/`.
+
 ## Files
 
 - `backend/src/marcaj/plots.py`: `PlotParams` gains `peak_reach` 0.6, `min_wave_exg` 0.005, `walk` 0.5, `walk_reach_m` 40, `gap_m` 3, `new_row_share` 0.6 and `merge_m` 5. New `_wave`, `_walk` and `_merge`. Docstring updated.

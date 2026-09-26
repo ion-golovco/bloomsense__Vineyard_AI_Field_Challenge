@@ -14,7 +14,7 @@ from shapely.geometry import shape
 from marcaj.tiles import REPO_ROOT
 
 REVIEW_PATH = REPO_ROOT / "data" / "review" / "verdicts.json"
-OBJECT_VERDICTS = {"right", "wrong"}
+OBJECT_VERDICTS = {"right", "wrong", "partly", "unsure"}  # partly/unsure: from the review tool (research/review)
 TILE_VERDICTS = {"vineyard", "no_vineyard"}
 MISSED_LABELS = {"block", "vineyard", "row", "interrow_area", "waste"}
 PLOT_CLASSES = {"vineyard", "overgrown", "orchard", "other"}
@@ -68,9 +68,11 @@ def missed(label: str, geometry: dict[str, Any], tile: str = "", note: str = "",
     return _append({"kind": "missed", "verdict": "missed", "label": label, "tile": tile, "note": note, "reviewer": reviewer, "geometry": geometry}, path)
 
 
-def plot_outline(label: str, geometry: dict[str, Any], note: str = "", reviewer: str = "", path: Path = REVIEW_PATH) -> dict[str, Any]:
+def plot_outline(label: str, geometry: dict[str, Any], note: str = "", reviewer: str = "", path: Path = REVIEW_PATH,
+                 replaces: str = "") -> dict[str, Any]:
     """A hand-drawn plot polygon in EPSG:32635: `vineyard` (bare-soil inter-rows), `overgrown` vineyard,
-    `orchard`, or `other` (field, garden, grass). The reference for what the plot detector must separate."""
+    `orchard`, or `other` (field, garden, grass). The reference for what the plot detector must separate.
+    `replaces` is the id of the first version of an outline that was corrected (the review tool's Plots tab)."""
     if label not in PLOT_CLASSES:
         raise ValueError(f"plot class must be one of {sorted(PLOT_CLASSES)}")
     outline = shape(geometry)
@@ -78,7 +80,8 @@ def plot_outline(label: str, geometry: dict[str, Any], note: str = "", reviewer:
         raise ValueError("draw a polygon to outline a plot")
     if not outline.is_valid:
         raise ValueError("the outline crosses itself; redraw it")
-    return _append({"kind": "plot", "verdict": label, "label": label, "note": note, "reviewer": reviewer, "geometry": geometry}, path)
+    return _append({"kind": "plot", "verdict": label, "label": label, "note": note, "reviewer": reviewer,
+                    **({"replaces": replaces} if replaces else {}), "geometry": geometry}, path)
 
 
 def delete_verdict(verdict_id: str, path: Path = REVIEW_PATH) -> bool:

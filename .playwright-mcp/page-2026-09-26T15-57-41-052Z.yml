@@ -1,0 +1,69 @@
+- generic [ref=e2]:
+  - application "Map of the selected vineyard field" [ref=e3]:
+    - generic:
+      - generic [ref=e4]:
+        - button "Zoom in" [ref=e5] [cursor=pointer]: +
+        - button "Zoom out" [ref=e6] [cursor=pointer]: −
+      - generic [ref=e7]:
+        - link "Leaflet" [ref=e8] [cursor=pointer]:
+          - /url: https://leafletjs.com
+        - text: "| ©"
+        - link "OpenStreetMap contributors" [ref=e13] [cursor=pointer]:
+          - /url: https://www.openstreetmap.org/copyright
+        - text: ", Drone: 3DATA COLLECT / OpenAerialMap ·"
+        - link "CC BY 4.0" [ref=e14] [cursor=pointer]:
+          - /url: https://creativecommons.org/licenses/by/4.0/
+  - complementary "Inspection navigation" [ref=e15]:
+    - generic [ref=e17]:
+      - strong [ref=e18]: Agrocontrol
+      - generic [ref=e19]: by BloomSense
+    - navigation "Sections" [ref=e20]:
+      - button "Per field" [ref=e21] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e22]: ▧
+      - button "All fields" [ref=e24] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e25]: ▦
+      - button "Measurements Areas & rows" [ref=e27] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e28]: ▥
+        - generic [ref=e29]:
+          - text: Measurements
+          - generic [ref=e30]: Areas & rows
+      - button "NDVI / NDMI Cadastru" [ref=e31] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e32]: ◈
+        - generic [ref=e33]:
+          - text: NDVI / NDMI
+          - generic [ref=e34]: Cadastru
+      - button "Yield & harvest" [ref=e35] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e36]: ↗
+    - generic [ref=e38]: AGROCONTROL · BLOOMSENSE
+  - status [ref=e39]: Loading the current field scene…
+  - region [ref=e40]:
+    - generic [ref=e41]:
+      - group "Who is using the app" [ref=e42]:
+        - button "Inspector" [pressed] [ref=e43] [cursor=pointer]
+        - button "Farmer" [ref=e44] [cursor=pointer]
+      - heading "Choose a field" [level=1] [ref=e45]
+    - generic [ref=e46]:
+      - generic [ref=e47]: Field
+      - combobox "Field" [disabled] [ref=e48]:
+        - option "Loading fields…" [selected]
+      - button "Fit selected field" [disabled] [ref=e49]: ⌗
+    - paragraph [ref=e50]: Loading field boundaries…
+  - region [ref=e51]:
+    - group [ref=e52]:
+      - generic "SITE TOTALS" [ref=e53] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e55]: ⌄
+      - paragraph [ref=e56]: Loading measurements…
+      - paragraph [ref=e57]: Lengths and areas in metres on the ground (EPSG:32635). Canopy and inter-row areas are the union of their polygons.
+  - region [ref=e58]:
+    - generic [ref=e59]: FIELD MEASUREMENTS
+    - heading "Measurements" [level=2] [ref=e60]
+    - paragraph [ref=e62]: Loading measurements…
+    - heading "Rows" [level=3] [ref=e63]
+    - generic [ref=e64]:
+      - text: ▲
+      - paragraph [ref=e65]: Loading rows…
+  - group "Map controls" [ref=e66]:
+    - button "Canopy segmentation" [disabled] [pressed] [ref=e67]: ◉ Canopy
+    - group [ref=e68]:
+      - generic "Map layers" [ref=e69] [cursor=pointer]: ▤ Layers
+  - generic "Map legend" [ref=e70]: Selected field

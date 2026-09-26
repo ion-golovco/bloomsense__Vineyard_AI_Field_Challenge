@@ -1,0 +1,261 @@
+- generic [ref=e2]:
+  - application "Map of the selected vineyard field" [ref=e3]:
+    - generic:
+      - generic:
+        - generic "Walk start" [ref=e119]: S
+        - generic "Walk end" [ref=e237]: E
+    - generic:
+      - generic [ref=e4]:
+        - button "Zoom in" [ref=e5] [cursor=pointer]: +
+        - button "Zoom out" [ref=e6] [cursor=pointer]: −
+      - generic [ref=e7]:
+        - link "Leaflet" [ref=e120] [cursor=pointer]:
+          - /url: https://leafletjs.com
+        - text: "| ©"
+        - link "OpenStreetMap contributors" [ref=e125] [cursor=pointer]:
+          - /url: https://www.openstreetmap.org/copyright
+        - text: ", Drone: 3DATA COLLECT / OpenAerialMap ·"
+        - link "CC BY 4.0" [ref=e126] [cursor=pointer]:
+          - /url: https://creativecommons.org/licenses/by/4.0/
+  - complementary "Inspection navigation" [ref=e15]:
+    - generic [ref=e17]:
+      - strong [ref=e18]: Agrocontrol
+      - generic [ref=e19]: by BloomSense
+    - navigation "Sections" [ref=e20]:
+      - button "Per field" [ref=e21] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e22]: ▧
+      - button "All fields" [ref=e24] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e25]: ▦
+      - button "NDVI / NDMI Cadastru" [ref=e27] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e28]: ◈
+        - generic [ref=e29]:
+          - text: NDVI / NDMI
+          - generic [ref=e30]: Cadastru
+      - button "Yield & harvest" [ref=e31] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e32]: ↗
+    - generic [ref=e34]: AGROCONTROL · BLOOMSENSE
+  - status [ref=e35]: 36 fields in scene · field route available
+  - region [ref=e36]:
+    - generic [ref=e37]:
+      - generic [ref=e38]: VINEYARD / INSPECTION
+      - heading "Choose a field" [level=1] [ref=e39]
+    - generic [ref=e40]:
+      - generic [ref=e41]: Field
+      - combobox "Field" [ref=e42]:
+        - option "Field P01" [selected]
+        - option "Field P02"
+        - option "Field P03"
+        - option "Field P04"
+        - option "Field P05"
+        - option "Field P06"
+        - option "Field P07"
+        - option "Field P08"
+        - option "Field P09"
+        - option "Field P10"
+        - option "Field P11"
+        - option "Field P12"
+        - option "Field P13"
+        - option "Field P14"
+        - option "Field P15"
+        - option "Field P16"
+        - option "Field P17"
+        - option "Field P18"
+        - option "Field P19"
+        - option "Field P20"
+        - option "Field P21"
+        - option "Field P22"
+        - option "Field P23"
+        - option "Field P24"
+        - option "Field P25"
+        - option "Field P26"
+        - option "Field P27"
+        - option "Field P28"
+        - option "Field P29"
+        - option "Field P30"
+        - option "Field P31"
+        - option "Field P32"
+        - option "Field P33"
+        - option "Field P34"
+        - option "Field P35"
+        - option "Field P36"
+      - button "Fit selected field" [ref=e43] [cursor=pointer]: ⌗
+    - paragraph [ref=e44]: 1.59 ha · Candidate boundary from the model
+  - region "INSPECTION IMPACT" [ref=e45]:
+    - generic [ref=e46]:
+      - generic [ref=e47]: INSPECTION IMPACT
+      - generic [ref=e48]: PENDING
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - generic [ref=e51]: Estimated labour saved
+        - strong [ref=e52]: —
+      - generic [aria-hidden] [ref=e53]: ↘
+    - generic [ref=e54]:
+      - generic [ref=e55]:
+        - generic [ref=e56]: Time saved
+        - strong [ref=e57]: —
+      - generic [ref=e58]:
+        - generic [ref=e59]: Field route
+        - strong [ref=e60]: 1.8 km
+    - paragraph [ref=e61]: "Planned walk: 87.3 min. Add your usual time for this field."
+    - group [ref=e62]:
+      - generic "Calculate with your costs" [ref=e63] [cursor=pointer]:
+        - text: Calculate with your costs
+        - generic [aria-hidden] [ref=e64]: ⌄
+  - region [ref=e65]:
+    - generic [ref=e66]:
+      - generic [ref=e67]:
+        - text: FIELD PLAN
+        - heading "Where to inspect" [level=2] [ref=e68]
+      - generic [ref=e69]: "20"
+    - paragraph [ref=e70]: 20 visit points in this field · route available
+    - group "Plan views" [ref=e71]:
+      - button "Visit points" [pressed] [ref=e72] [cursor=pointer]
+      - button "Evidence" [ref=e73] [cursor=pointer]
+    - generic [ref=e74]:
+      - generic [ref=e127]:
+        - button "1 Inspect visible waste Candidate point" [ref=e239] [cursor=pointer]:
+          - generic [ref=e240]: "1"
+          - generic [ref=e241]:
+            - strong [ref=e242]: Inspect visible waste
+            - generic [ref=e243]: Candidate point
+        - button "2 gap Candidate point · P01-R012" [ref=e244] [cursor=pointer]:
+          - generic [ref=e245]: "2"
+          - generic [ref=e246]:
+            - strong [ref=e247]: gap
+            - generic [ref=e248]: Candidate point · P01-R012
+        - button "3 gap Candidate point · P01-R016" [ref=e249] [cursor=pointer]:
+          - generic [ref=e250]: "3"
+          - generic [ref=e251]:
+            - strong [ref=e252]: gap
+            - generic [ref=e253]: Candidate point · P01-R016
+        - button "4 gap Candidate point · P01-R017" [ref=e254] [cursor=pointer]:
+          - generic [ref=e255]: "4"
+          - generic [ref=e256]:
+            - strong [ref=e257]: gap
+            - generic [ref=e258]: Candidate point · P01-R017
+        - button "5 gap Candidate point · P01-R023" [ref=e259] [cursor=pointer]:
+          - generic [ref=e260]: "5"
+          - generic [ref=e261]:
+            - strong [ref=e262]: gap
+            - generic [ref=e263]: Candidate point · P01-R023
+        - button "6 gap Candidate point · P01-R024" [ref=e264] [cursor=pointer]:
+          - generic [ref=e265]: "6"
+          - generic [ref=e266]:
+            - strong [ref=e267]: gap
+            - generic [ref=e268]: Candidate point · P01-R024
+        - button "7 gap Candidate point · P01-R024" [ref=e269] [cursor=pointer]:
+          - generic [ref=e270]: "7"
+          - generic [ref=e271]:
+            - strong [ref=e272]: gap
+            - generic [ref=e273]: Candidate point · P01-R024
+        - button "8 gap Candidate point · P01-R025" [ref=e274] [cursor=pointer]:
+          - generic [ref=e275]: "8"
+          - generic [ref=e276]:
+            - strong [ref=e277]: gap
+            - generic [ref=e278]: Candidate point · P01-R025
+        - button "9 gap Candidate point · P01-R025" [ref=e279] [cursor=pointer]:
+          - generic [ref=e280]: "9"
+          - generic [ref=e281]:
+            - strong [ref=e282]: gap
+            - generic [ref=e283]: Candidate point · P01-R025
+        - button "10 gap Candidate point · P01-R027" [ref=e284] [cursor=pointer]:
+          - generic [ref=e285]: "10"
+          - generic [ref=e286]:
+            - strong [ref=e287]: gap
+            - generic [ref=e288]: Candidate point · P01-R027
+        - button "11 gap Candidate point · P01-R027" [ref=e289] [cursor=pointer]:
+          - generic [ref=e290]: "11"
+          - generic [ref=e291]:
+            - strong [ref=e292]: gap
+            - generic [ref=e293]: Candidate point · P01-R027
+        - button "12 gap Candidate point · P01-R029" [ref=e294] [cursor=pointer]:
+          - generic [ref=e295]: "12"
+          - generic [ref=e296]:
+            - strong [ref=e297]: gap
+            - generic [ref=e298]: Candidate point · P01-R029
+        - button "13 gap Candidate point · P01-R029" [ref=e299] [cursor=pointer]:
+          - generic [ref=e300]: "13"
+          - generic [ref=e301]:
+            - strong [ref=e302]: gap
+            - generic [ref=e303]: Candidate point · P01-R029
+        - button "14 gap Candidate point · P01-R031" [ref=e304] [cursor=pointer]:
+          - generic [ref=e305]: "14"
+          - generic [ref=e306]:
+            - strong [ref=e307]: gap
+            - generic [ref=e308]: Candidate point · P01-R031
+        - button "15 gap Candidate point · P01-R032" [ref=e309] [cursor=pointer]:
+          - generic [ref=e310]: "15"
+          - generic [ref=e311]:
+            - strong [ref=e312]: gap
+            - generic [ref=e313]: Candidate point · P01-R032
+        - button "16 gap Candidate point · P01-R033" [ref=e314] [cursor=pointer]:
+          - generic [ref=e315]: "16"
+          - generic [ref=e316]:
+            - strong [ref=e317]: gap
+            - generic [ref=e318]: Candidate point · P01-R033
+        - button "17 gap Candidate point · P01-R049" [ref=e319] [cursor=pointer]:
+          - generic [ref=e320]: "17"
+          - generic [ref=e321]:
+            - strong [ref=e322]: gap
+            - generic [ref=e323]: Candidate point · P01-R049
+        - button "18 gap Candidate point · P01-R051" [ref=e324] [cursor=pointer]:
+          - generic [ref=e325]: "18"
+          - generic [ref=e326]:
+            - strong [ref=e327]: gap
+            - generic [ref=e328]: Candidate point · P01-R051
+        - button "19 gap Candidate point · P01-R051" [ref=e329] [cursor=pointer]:
+          - generic [ref=e330]: "19"
+          - generic [ref=e331]:
+            - strong [ref=e332]: gap
+            - generic [ref=e333]: Candidate point · P01-R051
+        - button "20 gap Candidate point · P01-R052" [ref=e334] [cursor=pointer]:
+          - generic [ref=e335]: "20"
+          - generic [ref=e336]:
+            - strong [ref=e337]: gap
+            - generic [ref=e338]: Candidate point · P01-R052
+      - group [ref=e75]:
+        - generic [ref=e76]:
+          - strong [ref=e77]: Plan a walk
+          - generic [ref=e78]:
+            - text: Covers
+            - combobox "Covers" [ref=e79]:
+              - option "This field" [selected]
+              - option "Whole farm"
+        - generic [ref=e80]:
+          - generic [aria-hidden] [ref=e81]: S
+          - generic [ref=e82]:
+            - generic [ref=e83]: Start
+            - strong [ref=e84]: Organizer START
+          - button "Set on map" [ref=e85] [cursor=pointer]
+        - generic [ref=e86]:
+          - generic [aria-hidden] [ref=e87]: E
+          - generic [ref=e88]:
+            - generic [ref=e89]: End
+            - strong [ref=e90]: 47.12791, 28.70264
+          - button "Set on map" [ref=e238] [cursor=pointer]
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - checkbox "Step across rows at gaps" [ref=e94]
+            - text: Step across rows at gaps
+          - button "Reset" [ref=e95] [cursor=pointer]
+          - button "Plan route" [ref=e96] [cursor=pointer]
+        - status [ref=e236]: 1.82 km · 19 of 20 visit points · no row steps · 0.2% off inter-rows and passages · 1.1 s.
+        - button "Download route.geojson" [ref=e339] [cursor=pointer]
+      - generic [ref=e97]:
+        - generic [ref=e98]: Planned route
+        - generic "Minimum visit-point confidence" [ref=e99]:
+          - text: Confidence
+          - combobox "Confidence" [ref=e100]:
+            - option "All" [selected]
+            - option "≥ 0.5"
+            - option "≥ 0.7"
+        - button "Hide route" [pressed] [ref=e228] [cursor=pointer]: Hide route ↗
+  - group "Map controls" [ref=e102]:
+    - button "Canopy segmentation" [pressed] [ref=e103] [cursor=pointer]: ◉ Canopy
+    - group [ref=e104]:
+      - generic "Map layers" [ref=e105] [cursor=pointer]: ▤ Layers
+  - generic "Map legend" [ref=e106]:
+    - generic [ref=e107]: Selected field
+    - generic [ref=e229]: Inspection route
+    - generic [ref=e231]: Visit point
+    - generic [ref=e233]: Canopy segmentation

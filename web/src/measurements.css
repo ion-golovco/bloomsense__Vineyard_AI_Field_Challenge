@@ -1,0 +1,76 @@
+/* Measurements view (site totals card, field card, row table) and the per-field Measurements tab. Selectors are
+   specific enough to win over style.css, which the bundle loads after this file. */
+body[data-view="measurements"] .impact, body[data-view="measurements"] .plan { display: none; }
+.nav-rail nav button[data-nav] { min-width: 0; }
+.measure-site { top: 72px; right: 20px; width: 315px; padding: 16px 18px; }
+.measure-panel { left: 224px; top: 259px; width: 310px; padding: 18px; display: flex; flex-direction: column; max-height: calc(100dvh - 340px); overflow: hidden; }
+.measure-panel > * { flex-shrink: 0; }
+.measure-panel h2 { font-size: 19px; letter-spacing: -.04em; margin: 7px 0 10px; }
+.measure-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; list-style: none; cursor: pointer; }
+.measure-head::-webkit-details-marker { display: none; }
+.measure-head .section-kicker { flex: 1; }
+.measure-chevron { font-size: 14px; line-height: 1; color: #667763; }
+details[open] > .measure-head .measure-chevron { transform: rotate(180deg); }
+details:not([open]) > .measure-head { margin-bottom: 0; }
+.basis-badge { display: inline-block; border: 1px solid #cfe3bd; border-radius: 999px; padding: 3px 7px; background: #e8f3dc; color: #3e6b2a; font-size: 9px; font-weight: 850; letter-spacing: .08em; white-space: nowrap; }
+.basis-badge.estimate { border-color: #ecd9a6; background: #fbf1d8; color: #6f5310; }
+.measure-basis { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 9px; }
+.measure-basis small { font-size: 11px; color: #6f786e; }
+.measure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0; }
+.measure-grid > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 9px 10px; border-radius: 10px; background: #f0f5e9; }
+.measure-grid > .wide { grid-column: 1 / -1; }
+.measure-grid dt { font-size: 11px; color: #657b5c; }
+.measure-grid dd { margin: 0; font-size: 16px; font-weight: 750; color: #334d2b; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.measure-grid dd small { display: block; margin-top: 1px; font-size: 11px; font-weight: 600; color: #657b5c; letter-spacing: 0; }
+.measure-note { margin: 9px 0 0; font-size: 11px; line-height: 1.45; color: #6f786e; }
+.measure-empty { margin: 4px 0; font-size: 12px; line-height: 1.45; color: #6d7968; }
+.measure-rows-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 14px 0 6px; font-size: 13px; color: #334038; }
+.measure-rows-title small { font-size: 10px; font-weight: 500; color: #69796c; }
+.measure-panel .row-table-wrap { flex: 1 1 auto; min-height: 90px; overflow: auto; border-top: 1px solid #e5e9df; }
+.row-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #334038; }
+.row-table th { position: sticky; top: 0; z-index: 1; padding: 0; background: #fff; border-bottom: 1px solid #e5e9df; }
+.row-table th button { width: 100%; padding: 8px 4px; border: 0; background: transparent; color: #566652; font-size: 11px; font-weight: 750; text-align: left; white-space: nowrap; }
+.row-table th[aria-sort="ascending"] button::after { content: " ▲"; font-size: 8px; }
+.row-table th[aria-sort="descending"] button::after { content: " ▼"; font-size: 8px; }
+.row-table th:nth-child(2) button, .row-table td:nth-child(2) { text-align: right; }
+.row-table td { padding: 3px 4px; border-bottom: 1px solid #edf0eb; white-space: nowrap; }
+.row-table td:last-child { white-space: normal; color: #5d6b5b; }
+.row-table td button { min-height: 28px; padding: 3px 0; border: 0; background: transparent; color: #633095; font-size: 12px; font-weight: 750; text-align: left; }
+.row-table tr:hover td { background: #faf5ff; }
+.row-table tr.selected td { background: #fff4dc; }
+.row-table tr.selected td button { color: #8a4b00; }
+#field-measure-panel { padding: 13px 18px 16px; }
+#field-measure-panel .measure-open { margin-top: 10px; padding: 8px 11px; font-size: 11px; }
+@media (max-width:1020px) and (min-width:701px) {
+  .measure-panel { left: 94px; width: 285px; max-height: calc(100dvh - 385px); }
+  .measure-site { width: 280px; }
+}
+@media (max-width:700px) {
+  .nav-rail nav button[data-nav] { width: 20%; }
+  .measure-site { top: 163px; right: 8px; width: min(206px, 56vw); padding: 9px 11px; }
+  .measure-head { margin-bottom: 6px; gap: 5px; }
+  .measure-site .section-kicker { white-space: nowrap; letter-spacing: .1em; }
+  .measure-site .section-kicker { font-size: 8px; }
+  .measure-site .measure-grid { gap: 4px; }
+  .measure-site .measure-grid > div { padding: 5px 7px; gap: 1px; }
+  .measure-site .measure-note { display: none; }
+  .measure-grid dt { font-size: 9px; }
+  .measure-grid dd { font-size: 12px; }
+  .measure-grid dd small { font-size: 9px; }
+  .measure-panel { top: auto; bottom: 76px; left: 8px; right: 8px; width: auto; max-height: 250px; padding: 11px 12px; }
+  .measure-panel > .section-kicker { display: none; }
+  .measure-panel h2 { font-size: 15px; margin: 0 0 6px; }
+  .measure-panel .measure-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .measure-panel .measure-grid > div { padding: 5px 6px; }
+  .measure-basis { margin-bottom: 6px; }.measure-basis small { font-size: 9px; }
+  .measure-rows-title { margin: 8px 0 3px; font-size: 11px; }.measure-rows-title small { font-size: 9px; }
+  .measure-panel .row-table-wrap { min-height: 60px; }
+  .row-table, .row-table td button { font-size: 11px; }
+  .row-table th button { padding: 6px 4px; font-size: 10px; }
+  #field-measure-panel { padding: 8px 13px 10px; }
+  #field-measure-panel .measure-grid dd { font-size: 12px; }
+  body[data-view="measurements"] .map-key { top: auto; bottom: 334px; }
+}
+/* three plan tabs (Visit points, Evidence, Measurements) on one line */
+.plan-tabs button[data-panel] { white-space: nowrap; padding-left: 7px; padding-right: 7px; }
+@media (max-width:1020px) and (min-width:701px) { .plan-tabs button[data-panel] { padding-left: 5px; padding-right: 5px; } }
