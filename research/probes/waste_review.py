@@ -1,6 +1,7 @@
 """Joins the detector output (waste.geojson) with my visual verdicts, checks the control tiles, renders the sheet
 data/generated/work/waste/detector_*.jpg (verdict in each caption) and prints precision.
-Run from backend/ after `python -m marcaj.waste` and `waste_labels.py`."""
+Site-wide v1 detector (before the in-block rule): reads candidates_sitewide_v1.json and waste_sitewide_v1.geojson.
+Run from backend/ after `waste_labels.py`."""
 
 import collections
 import json
@@ -24,8 +25,8 @@ EXTRA = {"siret3_r015_c011.tif": ("likely", "crumpled blue plastic sheet by a sh
 CONTROL_TILES = {"siret3_r006_c004.tif", "siret3_r021_c012.tif"}
 
 labels = json.loads((W / "labels.json").read_text())
-candidates = json.loads((W / "candidates.json").read_text())
-features = json.loads((W / "waste.geojson").read_text())["features"]
+candidates = json.loads((W / "candidates_sitewide_v1.json").read_text())
+features = json.loads((W / "waste_sitewide_v1.geojson").read_text())["features"]
 kept = []
 for feature in features:
     geometry = shape(feature["geometry"])

@@ -15,6 +15,11 @@ from marcaj.tiles import REPO_ROOT
 
 DEFAULT_SCENE = REPO_ROOT / "data" / "generated" / "scene.json"
 PREDICTION = "prediction"
+# Derived layers drawn over the scene: inspection points and Sentinel-2 zones (marcaj.poi), and the routes per
+# confidence cutoff (marcaj.route). Missing files are skipped; they are rebuilt from the scene on Sunday.
+OVERLAYS = [REPO_ROOT / "data" / "generated" / "work" / "poi" / "poi.geojson",
+            REPO_ROOT / "data" / "generated" / "work" / "poi" / "sentinel_zones.geojson",
+            REPO_ROOT / "data" / "generated" / "routes.geojson"]
 _TO_DISPLAY = Transformer.from_crs("EPSG:32635", "EPSG:4326", always_xy=True)
 
 
@@ -102,15 +107,36 @@ def measurement_rows(scene: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def overlay_features(scene: dict[str, Any], paths: list[Path] = OVERLAYS) -> list[dict[str, Any]]:
+    """Features of `paths` whose label the scene doesn't already hold. Of the inspection points, only route targets
+    (`challenge`) and Sentinel-2 points are kept; the other candidates are review material."""
+    present = {feature["properties"].get("label") for feature in scene["features"]}
+    out = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        layer = json.loads(path.read_text(encoding="utf-8"))
+        if layer.get("crs") != "EPSG:32635":
+            raise ValueError(f"{path} must be a projected EPSG:32635 FeatureCollection")
+        out += [feature for feature in layer["features"] if feature["properties"].get("label") not in present
+                and (feature["properties"].get("label") != "inspection" or feature["properties"].get("challenge")
+                     or str(feature["properties"].get("reason", "")).startswith("sentinel"))]
+    return out
+
+
 def browser_scene(scene: dict[str, Any]) -> dict[str, Any]:
     rows = measurement_rows(scene)
     totals = rows[0]
-    routes = _features_with_label(scene, "route")
+    overlays = overlay_features(scene)
+    routes = _features_with_label(scene, "route") or [f for f in overlays if f["properties"]["label"] == "route"]
+    official = [item for item in routes if item["properties"].get("min_confidence") is None]
+    targets = [f for f in _features_with_label(scene, "inspection") + overlays
+               if f["properties"]["label"] == "inspection" and f["properties"].get("challenge", True)]
     display_features = [{
         "type": "Feature",
         "geometry": mapping(transform(_TO_DISPLAY.transform, shape(feature["geometry"]))),
         "properties": feature["properties"],
-    } for feature in scene["features"] if feature["properties"].get("label") != "tile"]
+    } for feature in scene["features"] + overlays if feature["properties"].get("label") != "tile"]
     return {
         "source": scene.get("source", "generated scene"),
         "crs": "EPSG:4326",
@@ -121,8 +147,11 @@ def browser_scene(scene: dict[str, Any]) -> dict[str, Any]:
             "row_length_m": totals["row_length_m"],
             "canopy_area_m2": totals["canopy_area_m2"],
             "interrow_area_m2": totals["interrow_area_m2"],
-            "route_length_m": sum(shape(item["geometry"]).length for item in routes),
-            "target_count": len(_features_with_label(scene, "inspection")) + len(_features_with_label(scene, "waste")),
+            "route_length_m": sum(shape(item["geometry"]).length for item in official or routes),
+            "target_count": len(targets) + len(_features_with_label(scene, "waste")),
+            # one route per inspection-point confidence cutoff, for the client's slider; min_confidence None is the official route
+            "routes": [{key: item["properties"].get(key) for key in ("min_confidence", "length_m", "targets", "visited", "unreachable", "legal")}
+                       for item in routes],
             "rows": [item for item in rows if item["level"] == "row"],
         },
     }

@@ -1,7 +1,7 @@
 """Ranks the scan's candidates for visual review and renders the sheets r2_field_*.jpg (>= 15 m from buildings,
 top 160) and r2_town_*.jpg (top 40). The score is a review order, not the detector: size, solidity, isolation,
 colour (white by clipped share, blue, vivid, dark), 0 on pale structures, x0.1 for small white blobs on a row axis.
-Run from backend/ after `python -m marcaj.waste`."""
+Site-wide v1 scan: reads candidates_sitewide_v1.json. Run from backend/"""
 
 import json
 import math
@@ -28,7 +28,7 @@ def score(c: dict) -> float:
 
 
 if __name__ == "__main__":
-    candidates = json.loads((W / "candidates.json").read_text())
+    candidates = json.loads((W / "candidates_sitewide_v1.json").read_text())
     for c in candidates:
         c["score"] = score(c)
     for name, near, count in (("r2_field", False, 160), ("r2_town", True, 40)):

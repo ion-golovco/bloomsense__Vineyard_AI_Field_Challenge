@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import shapely
 from shapely.geometry import LineString, Point, shape
 from shapely.ops import unary_union
 
@@ -39,13 +41,29 @@ def route_targets(features: list[dict[str, Any]]) -> list[Point]:
     return [geometry if geometry.geom_type == "Point" else geometry.centroid for geometry in _geometries(features, "inspection", "waste")]
 
 
-def check_route(route: LineString, features: list[dict[str, Any]]) -> dict[str, Any]:
+def _length_in(route: LineString, geometry) -> float:
+    """Route metres inside `geometry`, summed per segment: an overlay of the whole line dissolves a route that
+    retraces itself, so an out-and-back spur would count once."""
+    if geometry.is_empty:
+        return 0.0
+    coords = np.asarray(route.coords)
+    segments = shapely.linestrings(np.stack([coords[:-1], coords[1:]], axis=1))
+    shapely.prepare(geometry)
+    inside = shapely.covered_by(segments, geometry)
+    partial = segments[~inside & shapely.intersects(segments, geometry)]
+    return float(shapely.length(segments[inside]).sum() + shapely.length(shapely.intersection(partial, geometry)).sum())
+
+
+def check_route(route: LineString, features: list[dict[str, Any]], targets: list[Point] | None = None) -> dict[str, Any]:
+    """The zero-score rules (start/end within 5 m of START, at most 2% outside inter-rows plus passages) and
+    target visits within 2 m; also metres through forbidden zones and canopies, which the brief rules out.
+    `targets` defaults to the scene's scored inspection and waste features."""
     starts = _geometries(features, "start")
     if len(starts) != 1:
         raise ValueError(f"Expected one start point, found {len(starts)}")
     start = starts[0]
-    outside_m = route.difference(passable_space(features)).length
-    targets = route_targets(features)
+    outside_m = max(route.length - _length_in(route, passable_space(features)), 0.0)
+    targets = route_targets(features) if targets is None else targets
     visited = sum(route.distance(target) <= VISIT_RADIUS_M for target in targets)
     report = {
         "length_m": route.length,
@@ -53,6 +71,8 @@ def check_route(route: LineString, features: list[dict[str, Any]]) -> dict[str, 
         "end_gap_m": start.distance(Point(route.coords[-1])),
         "outside_m": outside_m,
         "outside_share": outside_m / route.length if route.length else 1.0,
+        "forbidden_m": _length_in(route, unary_union(_geometries(features, "forbidden"))),
+        "canopy_m": _length_in(route, unary_union(_geometries(features, "vineyard"))),
         "targets": len(targets),
         "visited": visited,
     }

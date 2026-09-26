@@ -1,28 +1,28 @@
-"""Waste boxes (CVAT label `waste`) with no training: a colour-blob candidate generator and a hand-set verifier.
+"""Waste boxes (CVAT label `waste`) lying in the predicted inter-rows, with no training: a colour-anomaly candidate
+generator and a hand-set verifier. Only litter whose box centre lies in a predicted `interrow_area` polygon is kept
+(the user's decision: "we only care inter-row"), and it takes that inter-row's `vineyard_id`.
 
-Method, per tile at the native 0.025 m:
-1. Evidence pixels: white (darkest channel >= 200, chroma <= 45, >= 40 brighter than the 2 m median background;
-   pale soil tops out near 184), blue (hue 185-265, saturation >= 0.25) and, for the scan only, vivid red/orange
-   and very dark neutral pixels. No-data is kept 1 m away so the background never mixes it in.
-2. Candidates: 8-connected blobs of evidence (pieces within 0.1 m merged), 0.004-8 m2, with shape, colour and
-   surroundings: fill of the box, clipped share, luminance spread, green share of a 0.1-0.5 m ring, evidence
-   density within 3 m, overlap with pale structures (>= 3 m2 of pale 0.2 m cells: roofs, walls, kerbs, concrete,
-   tracks), distance to the nearest predicted row axis and to the organizers' forbidden zones (buildings).
-3. `accept`: white blobs of 0.1-1.5 m2, bright and partly clipped but textured (not a smooth disc: concrete well
-   lids), lying in vegetation, isolated, clear of pale structures, of buildings (10 m) and of row axes (0.5 m,
-   vine tubes and stakes); blue blobs of 0.04-1.5 m2 with the same context and a crumpled or printed texture.
-   Vivid and dark blobs are never accepted: in the scan they were roofs, machinery, flowers and shadows.
-4. Touching boxes (across tile edges) are merged; `vineyard_id` is the block the box lies in, or the nearest
-   predicted block within 10 m, otherwise empty (rules, section 3).
+Method, per tile at the native 0.025 m, on the pixels of the predicted inter-row polygons (inset 0.30 m from the row
+axes, so standing tubes, stakes, posts and canopies are outside):
+1. Evidence: pixels that are neither soil nor vegetation against the 2 m median background: white (darkest channel
+   >= 170 and >= 40 brighter than the background), coloured (chroma >= 60, hue outside 25-175: red, pink, blue,
+   purple), or black and neutral (luminance <= 45, chroma <= 20, >= 60 darker than the background). Pieces within
+   0.05 m form one blob.
+2. Features per blob: area, colour class shares, luminance, chroma, hue, RGB distance from the background, the
+   spread across its narrow axis and its length, and the distance to the nearest predicted row axis.
+3. `accept`: white blobs of 0.03-1.5 m2 with luminance >= 220, chroma <= 15, distance >= 150, not a thin line
+   (narrow spread >= 0.04 m, length <= 3x width) and >= 0.9 m from a row axis (leaning and lying white tubes and
+   stakes stay within about 0.75 m of theirs); coloured blobs of >= 0.02 m2 with chroma >= 80 and distance >= 100;
+   black blobs never (vine shadows fall into the inter-rows and look the same).
 
-Measured (research/notes/waste.md): the scan of all 311 tiles gives 25,153 candidates in 84 s (0.6 GB peak) on
-one core of an M4 Pro; the verifier keeps 29 boxes. By eye, 10 of them are likely litter (34%), 12 are unsure
-(small white objects: bag, paper or stone cannot be told apart at 2.5 cm/px) and 7 are not litter (a concrete
-well ring, stones, a wall end, a concrete base, a flowering shrub). The thresholds were set with those crops in
-view, so this is in-sample. Boxes cover the white pixels only and can under-cover printed or multi-part items.
-Control: nothing is kept on the two organizer example tiles, which have no waste; the best raw candidate
-there (a pale object at the r006_c004 headland, score 0.92) is rejected by the building-distance rule.
-Run: uv run --frozen python -m marcaj.waste (writes data/generated/work/waste/waste.geojson)."""
+Measured (research/notes/waste.md): 97,215 candidates in the 1,727 inter-rows of 131 tiles in 86 s (1 GB peak, one
+core of an M4 Pro). The verifier keeps 2 boxes: a white blob caught on the anchor wire of a P02 end post (r019_c013,
+E 629675.3 N 5220198.9) and a crumpled white piece mid inter-row in P01 (r008_c003, E 629161.2 N 5220797.2), both
+likely litter by eye. A looser first version (luminance 205, chroma 25, no row distance) kept 86 boxes, and by eye
+they were silvery shrubs, pale clods and white tubes and stakes leaning or lying beside the rows, not litter.
+Control: 0 boxes on the two organizer example tiles. The thresholds were set with these crops in view (in-sample).
+Run: uv run --frozen python -m marcaj.waste (writes
+data/generated/work/waste/waste.geojson)."""
 
 import json
 import time
@@ -32,8 +32,8 @@ from typing import Any
 
 import numpy as np
 import rasterio
+from rasterio.features import rasterize
 from scipy import ndimage
-from shapely import STRtree
 from shapely.geometry import box, mapping, shape
 from shapely.ops import unary_union
 
@@ -43,46 +43,31 @@ WORK_DIR = REPO_ROOT / "data" / "generated" / "work" / "waste"
 PREDICTIONS_PATH = REPO_ROOT / "data" / "generated" / "predictions.geojson"
 BG_FACTOR = 8  # background statistics on a 0.2 m grid
 EIGHT = np.ones((3, 3), bool)
-KINDS = ("white", "blue", "vivid", "dark")
-MIN_AREA_M2 = {"white": 0.01, "blue": 0.004, "vivid": 0.004, "dark": 0.12}
+KINDS = ("white", "colour", "black")
 
 
 @dataclass(frozen=True)
 class WasteParams:
-    bg_m: float = 2.0             # median window for the local background
-    white_min: float = 200.0      # darkest channel of a white pixel
-    white_chroma: float = 45.0    # max - min channel of a white pixel
-    bright_contrast: float = 40.0  # luminance over the local background
-    dark_max: float = 30.0
-    dark_contrast: float = 70.0
-    vivid_s: float = 0.5
-    blue_s: float = 0.25
-    max_area_m2: float = 8.0
-    merge_m: float = 0.10         # pieces closer than this form one object
-    structure_min: float = 175.0  # darkest channel of a pale structure cell (0.2 m)
-    structure_m2: float = 3.0
+    bg_m: float = 2.0              # median window for the local background
+    white_min: float = 170.0       # darkest channel of a white pixel
+    white_contrast: float = 40.0   # luminance over the background
+    colour_chroma: float = 60.0    # max - min channel of a coloured pixel, outside the soil and vegetation hues
+    black_max: float = 45.0
+    black_contrast: float = 60.0
+    merge_m: float = 0.05
+    min_candidate_m2: float = 0.005
     # verifier
-    white_area_m2: tuple[float, float] = (0.10, 1.5)
-    blue_area_m2: tuple[float, float] = (0.04, 1.5)
-    min_fill: float = 0.35
-    min_clipped: float = 0.25     # share of pixels with every channel >= 235
-    min_lum: float = 225.0
-    white_texture: float = 9.5    # luminance std; smooth discs are well lids
-    blue_texture: float = 20.0    # planters, pools and roofs are smooth
-    min_ring_green: float = 0.4
-    max_density: float = 0.03     # other evidence within 3 m
-    building_m: float = 10.0
-    row_m: float = 0.5
+    area_m2: tuple[float, float] = (0.03, 1.5)
+    white_lum: float = 220.0       # pale clods and stones on dark soil stay near 205-215
+    white_chroma: float = 15.0     # silvery shrubs and weeds are tinted
+    white_dev: float = 150.0
+    white_row_m: float = 0.9       # leaning and lying tubes and stakes stay within about 0.75 m of their row axis
+    min_width_m: float = 0.04      # spread across the narrow axis; lying tubes and stakes are thinner lines
+    max_elongation: float = 3.0    # length over width spread; a tube or stake lying flat is a long line
+    colour_area_m2: float = 0.02
+    colour_min_chroma: float = 80.0
+    colour_dev: float = 100.0
     pad_m: float = 0.025
-
-
-def _hsv(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    r, g, b = rgb
-    mx, mn = rgb.max(0), rgb.min(0)
-    c = mx - mn
-    safe = np.maximum(c, 1e-6)
-    h = np.where(mx == r, ((g - b) / safe) % 6, np.where(mx == g, (b - r) / safe + 2, (r - g) / safe + 4)) * 60
-    return np.where(c > 0, h, 0), c / np.maximum(mx, 1e-6), mx
 
 
 def _coarse(values: np.ndarray) -> np.ndarray:
@@ -93,142 +78,106 @@ def _fine(values: np.ndarray) -> np.ndarray:
     return np.repeat(np.repeat(values, BG_FACTOR, 0), BG_FACTOR, 1)
 
 
-def masks(rgb: np.ndarray, params: WasteParams) -> dict[str, np.ndarray]:
-    """Per-pixel evidence at native resolution (white, blue, vivid, dark) and the helper layers `_lum`, `_exg`, `_valid`."""
-    rgb = rgb.astype(np.float32)
+def _hue(rgb: np.ndarray) -> np.ndarray:
+    r, g, b = rgb
+    mx, mn = rgb.max(0), rgb.min(0)
+    c = np.maximum(mx - mn, 1e-6)
+    return np.where(mx == r, ((g - b) / c) % 6, np.where(mx == g, (b - r) / c + 2, (r - g) / c + 4)) * 60
+
+
+def interrows(predictions: list[dict[str, Any]]) -> list[tuple[Any, str]]:
+    return [(shape(f["geometry"]), f["properties"].get("vineyard_id", "")) for f in predictions if f["properties"].get("label") == "interrow_area"]
+
+
+def evidence(rgb: np.ndarray, inside: np.ndarray, params: WasteParams = WasteParams()) -> dict[str, np.ndarray]:
+    """Per-pixel white, colour and black evidence inside `inside`, plus the helper layers `_dev` and `_lum`."""
+    size = int(params.bg_m / (PIXEL_M * BG_FACTOR)) | 1
+    background = np.stack([_fine(ndimage.median_filter(_coarse(band), size=size)) for band in rgb])
     lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
-    valid = rgb.sum(0) > 30
-    # no-data is black: keep 1 m clear of it so the background median never mixes it in
-    coarse_valid = ndimage.binary_erosion(_coarse(valid) == 1, iterations=round(1.0 / (PIXEL_M * BG_FACTOR)), border_value=1)
-    valid &= _fine(coarse_valid)
-    contrast = lum - _fine(ndimage.median_filter(_coarse(lum), size=int(params.bg_m / (PIXEL_M * BG_FACTOR)) | 1))
-    h, s, v = _hsv(rgb)
-    mn = rgb.min(0)
+    bg_lum = 0.299 * background[0] + 0.587 * background[1] + 0.114 * background[2]
+    mx, mn = rgb.max(0), rgb.min(0)
+    hue = _hue(rgb)
+    soil_or_green = (hue >= 25) & (hue <= 175)  # tan and brown soil, dry and green vegetation
     return {
-        "white": valid & (mn >= params.white_min) & (v - mn <= params.white_chroma) & (contrast >= params.bright_contrast),
-        "blue": valid & (h >= 185) & (h <= 265) & (s >= params.blue_s) & (rgb[2] - rgb[0] >= 25) & (v >= 60),
-        "vivid": valid & (s >= params.vivid_s) & (v >= 90) & ((h >= 290) | (h <= 12) | ((h <= 45) & (s >= 0.7))),
-        "dark": valid & (lum <= params.dark_max) & (contrast <= -params.dark_contrast) & (v - mn <= 30),
-        "_lum": lum, "_exg": (2 * rgb[1] - rgb[0] - rgb[2]) / np.maximum(rgb.sum(0), 1), "_valid": valid,
+        "white": inside & (mn >= params.white_min) & (lum - bg_lum >= params.white_contrast),
+        "colour": inside & (mx - mn >= params.colour_chroma) & ~soil_or_green & (mx >= 80),
+        "black": inside & (lum <= params.black_max) & (mx - mn <= 20) & (bg_lum - lum >= params.black_contrast),
+        "_dev": np.sqrt(((rgb - background) ** 2).sum(0)), "_lum": lum, "_hue": hue,
     }
 
 
-def tile_candidates(tile: Tile, params: WasteParams = WasteParams()) -> list[dict[str, Any]]:
-    """Connected blobs of evidence with their shape, colour and surroundings, in tile pixels and EPSG:32635."""
+def tile_candidates(tile: Tile, polygons: list[tuple[Any, str]], rows: list[Any], params: WasteParams = WasteParams()) -> list[dict[str, Any]]:
+    """Blobs of evidence inside the tile's inter-rows, with their features, in tile pixels and EPSG:32635."""
+    hits = [(i, polygon) for i, (polygon, _) in enumerate(polygons) if polygon.intersects(tile.bounds)]
+    if not hits:
+        return []
     with rasterio.open(tile.path) as source:
-        rgb = source.read()
-    evidence = masks(rgb, params)
-    any_mask = np.logical_or.reduce([evidence[kind] for kind in KINDS])
-    # evidence share within 3 m: blossom, stone fields and roof clutter are dense, a lone bag is not
-    density = ndimage.uniform_filter(_coarse(any_mask.astype(np.float32)), size=int(3.0 / (PIXEL_M * BG_FACTOR)) | 1, mode="constant")
-    # roofs, walls, kerbs, concrete and pale tracks: pale regions of 3 m2 or more on the 0.2 m grid, grown 0.4 m
-    pale = _coarse(rgb.astype(np.float32)).min(0) >= params.structure_min
-    pale_labels, _ = ndimage.label(pale, EIGHT)
-    sizes = np.bincount(pale_labels.ravel()) * (PIXEL_M * BG_FACTOR) ** 2
-    structure = ndimage.binary_dilation((sizes >= params.structure_m2)[pale_labels] & pale, EIGHT, iterations=2)
-    grown = ndimage.binary_dilation(any_mask, EIGHT, iterations=max(1, round(params.merge_m / PIXEL_M / 2)))
-    labels, _ = ndimage.label(grown, EIGHT)
+        rgb, transform = source.read().astype(np.float32), source.transform
+    owner = rasterize([(polygon, i + 1) for i, polygon in hits], out_shape=(TILE_PX, TILE_PX), transform=transform, dtype="int32")
+    layers = evidence(rgb, owner > 0, params)
+    near = [row for row in rows if row.intersects(tile.bounds.buffer(3.0))]
+    any_mask = ndimage.binary_opening(np.logical_or.reduce([layers[kind] for kind in KINDS]), np.ones((2, 2), bool))
+    labels, _ = ndimage.label(ndimage.binary_dilation(any_mask, EIGHT, iterations=max(1, round(params.merge_m / PIXEL_M / 2))), EIGHT)
     labels[~any_mask] = 0
     found = []
-    ring_px = round(0.5 / PIXEL_M)
     for index, window in enumerate(ndimage.find_objects(labels), start=1):
         if window is None:
             continue
         mask = labels[window] == index
         area = mask.sum() * PIXEL_M ** 2
-        if not min(MIN_AREA_M2.values()) <= area <= params.max_area_m2:
-            continue
-        shares = {kind: float(evidence[kind][window][mask].mean()) for kind in KINDS}
-        kind = max(shares, key=shares.get)
-        if area < MIN_AREA_M2[kind]:
+        if area < params.min_candidate_m2 or area > 3.0:
             continue
         ys, xs = np.nonzero(mask)
         r0, c0 = window[0].start + ys.min(), window[1].start + xs.min()
         r1, c1 = window[0].start + ys.max() + 1, window[1].start + xs.max() + 1
-        big = (slice(max(r0 - ring_px, 0), min(r1 + ring_px, TILE_PX)), slice(max(c0 - ring_px, 0), min(c1 + ring_px, TILE_PX)))
-        own = labels[big] == index
-        ring = ndimage.binary_dilation(own, iterations=ring_px) & ~ndimage.binary_dilation(own, iterations=4) & evidence["_valid"][big]
-        exg_ring = evidence["_exg"][big][ring]
-        pix = rgb[:, window[0], window[1]][:, mask].astype(np.float32)
-        lum = evidence["_lum"][window][mask]
+        spread = np.sqrt(np.maximum(np.linalg.eigvalsh(np.cov(np.vstack([xs, ys]).astype(float))), 0)) * PIXEL_M if len(xs) > 2 else np.zeros(2)
+        pix = rgb[:, window[0], window[1]][:, mask]
+        shares = {kind: float(layers[kind][window][mask].mean()) for kind in KINDS}
+        geometry = tile.to_world(box(c0, r0, c1, r1))
+        owners = owner[window][mask]
         found.append({
-            "tile": tile.name, "px": [int(c0), int(r0), int(c1), int(r1)], "bounds": list(tile.to_world(box(c0, r0, c1, r1)).bounds),
-            "area_m2": float(area), "w_m": float((c1 - c0) * PIXEL_M), "h_m": float((r1 - r0) * PIXEL_M),
-            "fill": float(mask.sum() / ((r1 - r0) * (c1 - c0))), "kind": kind, **shares,
-            "lum": float(lum.mean()), "lum_std": float(lum.std()),
-            "rgb": [float(x) for x in pix.mean(1)], "clipped": float((pix.min(0) >= 235).mean()),
-            "ring_green": float((exg_ring > 0.05).mean()) if exg_ring.size else 0.0,
-            "ring_lum": float(evidence["_lum"][big][ring].mean()) if ring.any() else 0.0,
-            "density": float(density[(r0 + r1) // 2 // BG_FACTOR, (c0 + c1) // 2 // BG_FACTOR]),
-            "structure": float(structure[r0 // BG_FACTOR:(r1 - 1) // BG_FACTOR + 1, c0 // BG_FACTOR:(c1 - 1) // BG_FACTOR + 1].mean()),
+            "tile": tile.name, "px": [int(c0), int(r0), int(c1), int(r1)], "bounds": list(geometry.bounds), "box": list(geometry.bounds),
+            "kind": max(shares, key=shares.get), **shares, "area_m2": float(area),
+            "dev": float(layers["_dev"][window][mask].mean()), "lum": float(layers["_lum"][window][mask].mean()),
+            "chroma": float((pix.max(0) - pix.min(0)).mean()), "hue": float(np.median(layers["_hue"][window][mask])),
+            "rgb": [round(float(v)) for v in pix.mean(1)], "width_m": float(spread[0]), "length_m": float(spread[1]),
+            "vineyard_id": polygons[np.bincount(owners[owners > 0]).argmax() - 1][1] if (owners > 0).any() else "",
+            "row_m": float(min((row.distance(geometry.centroid) for row in near), default=99.0)),
         })
     return found
 
 
-@dataclass(frozen=True)
-class Context:
-    blocks: list[tuple[Any, str]]
-    rows: list[Any]
-    row_index: STRtree
-    forbidden: Any
-    passages: Any
-
-
-def load_context(predictions: list[dict[str, Any]], data_dir: Path = DATA_DIR) -> Context:
-    """Predicted blocks and row axes, and the organizers' forbidden zones and passages."""
-    blocks = [(shape(f["geometry"]), f["properties"]["vineyard_id"]) for f in predictions if f["properties"].get("label") == "block"]
-    rows = [shape(f["geometry"]) for f in predictions if f["properties"].get("label") == "row"]
-    zones = {name: unary_union([shape(f["geometry"]) for f in json.loads((data_dir / "02_route" / f"{name}.geojson").read_text(encoding="utf-8"))["features"]])
-             for name in ("forbidden", "passages")}
-    return Context(blocks, rows, STRtree(rows), zones["forbidden"], zones["passages"])
-
-
-def vineyard_id(geometry: Any, blocks: list[tuple[Any, str]], reach_m: float = 10.0) -> str:
-    """The block the object lies in, or the nearest block within `reach_m`, otherwise empty (rules, section 3)."""
-    distance, name = min(((polygon.distance(geometry), name) for polygon, name in blocks), default=(np.inf, ""))
-    return name if distance <= reach_m else ""
-
-
-def annotate(candidate: dict[str, Any], context: Context) -> dict[str, Any]:
-    geometry = box(*candidate["bounds"])
-    centre = geometry.centroid
-    nearest = context.row_index.nearest(centre) if context.rows else None
-    candidate["row_m"] = float(context.rows[nearest].distance(centre)) if nearest is not None else 99.0
-    candidate["where"] = ("forbidden" if context.forbidden.intersects(centre) else "passage" if context.passages.intersects(centre)
-                          else "block" if any(p.intersects(centre) for p, _ in context.blocks) else "outside")
-    candidate["forbidden_m"] = float(context.forbidden.distance(centre))
-    candidate["vineyard_id"] = vineyard_id(geometry, context.blocks)
-    return candidate
-
-
 def accept(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
-    """The verifier (module docstring, step 3). Needs `annotate` first."""
-    area = c["area_m2"]
-    context = (c["structure"] == 0 and c["fill"] >= params.min_fill and c["ring_green"] >= params.min_ring_green
-               and c["density"] - area / 9 <= params.max_density and c["forbidden_m"] >= params.building_m and c["row_m"] >= params.row_m)
+    """The verifier (module docstring, step 3)."""
+    if c["area_m2"] > params.area_m2[1] or c["length_m"] > params.max_elongation * max(c["width_m"], 1e-3):
+        return False
     if c["kind"] == "white":
-        disc = c["fill"] >= 0.6 and max(c["w_m"], c["h_m"]) < 1.3 * min(c["w_m"], c["h_m"]) and c["lum_std"] < 10
-        return (context and not disc and params.white_area_m2[0] <= area <= params.white_area_m2[1] and c["clipped"] >= params.min_clipped
-                and c["lum"] >= params.min_lum and c["lum_std"] >= params.white_texture)
-    if c["kind"] == "blue":
-        return context and params.blue_area_m2[0] <= area <= params.blue_area_m2[1] and c["lum_std"] >= params.blue_texture
+        return (c["area_m2"] >= params.area_m2[0] and c["width_m"] >= params.min_width_m and c["lum"] >= params.white_lum
+                and c["chroma"] <= params.white_chroma and c["dev"] >= params.white_dev and c["row_m"] >= params.white_row_m)
+    if c["kind"] == "colour":
+        return c["area_m2"] >= params.colour_area_m2 and c["chroma"] >= params.colour_min_chroma and c["dev"] >= params.colour_dev
     return False
 
 
 def detect(tiles: list[Tile], predictions: list[dict[str, Any]], data_dir: Path = DATA_DIR,
            params: WasteParams = WasteParams()) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Waste features (EPSG:32635 boxes, `source` prediction) and every annotated candidate, for review."""
-    context = load_context(predictions, data_dir)
-    candidates = [annotate(c, context) for tile in tiles for c in tile_candidates(tile, params)]
+    """Waste features (EPSG:32635 boxes, `source` prediction, the inter-row's `vineyard_id`) whose centre lies in a
+    predicted inter-row, and every candidate, for review. `data_dir` is kept for the caller's signature."""
+    polygons = interrows(predictions)
+    rows = [shape(f["geometry"]) for f in predictions if f["properties"].get("label") == "row"]
+    candidates = [c for tile in tiles for c in tile_candidates(tile, polygons, rows, params)]
     kept = [c for c in candidates if accept(c, params)]
-    merged = unary_union([box(*c["bounds"]).buffer(params.pad_m, join_style="mitre") for c in kept])
+    merged = unary_union([box(*c["box"]).buffer(params.pad_m, join_style="mitre") for c in kept])
+    union = unary_union([polygon for polygon, _ in polygons]) if kept else None
     features = []
     for part in getattr(merged, "geoms", [merged]) if kept else []:
         geometry = box(*part.bounds)
-        members = [c for c in kept if geometry.intersects(box(*c["bounds"]))]
+        if not union.contains(geometry.centroid):
+            continue
+        members = [c for c in kept if geometry.intersects(box(*c["box"]))]
         features.append({"type": "Feature", "geometry": mapping(geometry), "properties": {
-            "label": "waste", "source": "prediction", "vineyard_id": vineyard_id(geometry, context.blocks),
-            "kind": members[0]["kind"], "area_m2": round(sum(c["area_m2"] for c in members), 3), "tiles": sorted({c["tile"] for c in members})}})
+            "label": "waste", "source": "prediction", "vineyard_id": members[0]["vineyard_id"],
+            "area_m2": round(sum(c["area_m2"] for c in members), 3), "tiles": sorted({c["tile"] for c in members})}})
     return features, candidates
 
 

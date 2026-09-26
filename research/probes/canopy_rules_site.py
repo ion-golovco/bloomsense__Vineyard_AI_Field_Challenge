@@ -17,7 +17,7 @@ from marcaj.review import load_verdicts
 from marcaj.tiles import load_tiles
 
 NEW = CanopyParams()
-OLD = replace(NEW, green_dn=0, refine2_m=0, row_contrast=1.3, row_gap=0, row_value=0, close_m=0, inset_m=0)
+OLD = replace(NEW, green_dn=0, refine2_m=0, row_contrast=1.3, row_gap=0, row_value=0, close_m=0, inset_m=0, young_pieces=0, strip_gr=0)
 outlines = {label: unary_union([shape(v["geometry"]) for v in load_verdicts() if v["kind"] == "plot" and v["label"] == label])
             for label in ("vineyard", "orchard", "overgrown")}
 tiles = load_tiles()

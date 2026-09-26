@@ -5,11 +5,16 @@ plot's own row frame: the sides on the outermost row axes, the ends square to th
 fit is then walked outward row by row and along each row while the row stands out from its inter-rows, so a bare-soil
 core takes in its grassy continuation; fits of one planting that a tree split are joined, and edges that face a road
 are moved onto it. Row axes are the across-row ExG profile peaks, which matched the reference rows to a median
-0.04-0.06 m on both reference tiles.
+0.04-0.06 m on both reference tiles. Optionally (`parcel_share` 0.7; off by default until the cadastre licence is
+settled, research/notes/fields.md), a plot then takes in the rest of a cadastral parcel it already covers 70% of when
+that rest shows the plot's own rows. Parcels come from the public cadastre WMS of I.P. Cadastrul Bunurilor Imobile
+(https://map.cadastru.md/geoserver/ows, layer w_cbi:cad_terenuri, fetched 26 Sep 2026 by `marcaj.cadastre`) and are
+read from data/raw/external/cadastre/parcels_32635.geojson; with `parcel_share` set, a missing file raises FileNotFoundError.
 
 Against the 35 hand-drawn vineyard outlines (`judge.plot_scores`, north tunes, south validates): north F1 0.81 at
-IoU 0.5, 0.54 at 0.75, median best IoU 0.76, area IoU 0.81; south 0.65 / 0.35 / 0.70 / 0.66. The frozen detector
-before the walk scored 0.59 / 0.44 / 0.65 / 0.79 and 0.47 / 0.12 / 0.52 / 0.55. About 23 s."""
+IoU 0.5, 0.54 at 0.75, median best IoU 0.76, area IoU 0.81; south 0.65 / 0.35 / 0.70 / 0.66. With the parcels north
+0.81 / 0.54 / 0.76 / 0.82 and south 0.76 / 0.41 / 0.70 / 0.70. The frozen detector before the walk scored
+0.59 / 0.44 / 0.65 / 0.79 and 0.47 / 0.12 / 0.52 / 0.55. About 22 s."""
 
 import json
 import time
@@ -25,7 +30,9 @@ from scipy import ndimage, stats
 from shapely import contains_xy
 from shapely.geometry import LineString, Polygon, mapping, shape
 from shapely.ops import unary_union
+from shapely.strtree import STRtree
 
+from marcaj.cadastre import load_parcels
 from marcaj.layers import LAYER_PX_M, Layers, exg, load_layers
 from marcaj.mosaic import MOSAIC_PX_M, load_mosaic
 from marcaj.tiles import DATA_DIR
@@ -51,7 +58,12 @@ class PlotParams:
     walk_reach_m: float = 40.0    # how far beyond its seed a plot may be walked
     gap_m: float = 3.0            # a row may lapse this long (missing vines); a track, headland or tree clump stops it
     new_row_share: float = 0.6    # a new outer row needs evidence along this share of its neighbour
+    side_green: float = 0.0       # ...or this share of its tube green (mosaic ExG > 0.08); 0 = off
+    side_flank: float = 0.5       # ...with its flanks at most this share as green
     merge_m: float = 5.0          # fits of one planting under this far apart join (the 5 m block rule); 0 = off
+    parcel_share: float = 0.0     # a cadastral parcel the plot already covers this share of is filled... (0.7 measured; 0 = off until the cadastre licence is settled)
+    parcel_gate: float = 0.4      # ...where the rest shows the plot's rows: across-row ExG wave at its angle and spacing >= this share of the plot's
+    parcel_phase: float = 0.35    # ...on the plot's own row lattice, within this share of a spacing
 
 
 class _Excess:
@@ -180,13 +192,20 @@ def _quadrilateral(excess: _Excess, region: Polygon, angle: float, spacing: floa
 
 def _wave(excess: _Excess, polygon: Polygon, angle: float, spacing: float) -> float:
     """Amplitude of the across-row ExG wave at the plot's spacing: green vine rows, not tractor lines on bare soil."""
+    return abs(_phasor(excess, polygon, angle, spacing, np.asarray(polygon.centroid.coords[0])))
+
+
+def _phasor(excess: _Excess, polygon, angle: float, spacing: float, origin: np.ndarray) -> complex:
+    """The across-row ExG wave at the plot's spacing as a complex amplitude, its phase measured from `origin`, so two
+    areas on one row lattice have the same phase."""
     frame = _Frame(polygon, angle, MOSAIC_PX_M)
     counts = frame.inside.sum(1)
     use = counts > 10
     if use.sum() < 8:
-        return 0.0
+        return 0j
     profile = ((excess.at(frame.x, frame.y) * frame.inside).sum(1) / np.maximum(counts, 1))[use]
-    return float(2 * np.abs((profile * np.exp(-2j * np.pi * frame.v[use] / spacing)).mean()))
+    v = frame.v[use] + (frame.origin - origin) @ np.array([-np.sin(frame.angle), np.cos(frame.angle)])
+    return complex(2 * (profile * np.exp(-2j * np.pi * v / spacing)).mean())
 
 
 def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable_at, params: PlotParams) -> tuple[Polygon, list[LineString]] | None:
@@ -201,8 +220,10 @@ def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable
     frame = _Frame(region, angle, MOSAIC_PX_M, pad=params.walk_reach_m)
     usable = usable_at(frame.x, frame.y)
     tube = 2 * round(0.3 / MOSAIC_PX_M) + 1
-    mean = ndimage.uniform_filter1d(np.where(usable, excess.at(frame.x, frame.y), 0), tube, axis=0) / np.maximum(
+    values = excess.at(frame.x, frame.y)
+    mean = ndimage.uniform_filter1d(np.where(usable, values, 0), tube, axis=0) / np.maximum(
         ndimage.uniform_filter1d(usable.astype(np.float32), tube, axis=0), 1e-3)
+    green = ndimage.uniform_filter1d(((values > 0.08) & usable).astype(np.float32), tube, axis=0)
     half = round(spacing / 2 / MOSAIC_PX_M)
     evidence = np.zeros(mean.shape, np.float32)
     evidence[half:-half] = mean[half:-half] - 0.5 * (mean[:-2 * half] + mean[2 * half:])
@@ -236,7 +257,10 @@ def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable
                 break
             best = max(candidates, key=lambda iv: np.median(np.where(ok[iv, a:b + 1], evidence[iv, a:b + 1], -np.inf)))
             if (ok[best, a:b + 1] & (evidence[best, a:b + 1] > threshold)).mean() < params.new_row_share:
-                break
+                # or vine green on the lattice: green along the row, much less half a spacing to either side (not a verge)
+                row, flank = green[best, a:b + 1].mean(), 0.5 * (green[best - half, a:b + 1] + green[best + half, a:b + 1]).mean()
+                if not params.side_green or row < params.side_green or flank > params.side_flank * row or ok[best, a:b + 1].mean() < params.new_row_share:
+                    break
             rows[best] = [a, b]
             edge = best
     gap = params.gap_m / MOSAIC_PX_M
@@ -258,6 +282,52 @@ def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable
     if not walked.is_valid or walked.area < quad.area:
         return result
     return walked, [LineString(list(zip(*frame.world([frame.u[0], frame.u[-1]], [c, c])))) for c in v]
+
+
+def _fill_parcels(fitted: list, excess: _Excess, roads, parcels: list, params: PlotParams) -> list:
+    """Takes in the rest of each cadastral parcel a plot already mostly covers when that rest carries the plot's own
+    rows (same angle and spacing, on the same row lattice), and continues the lattice into it, each new outer row on its
+    ExG peak.
+    A parcel is ownership, not planting, so it never creates a plot and only extends one where the rows agree."""
+    tree, out = STRtree(parcels), []
+    for polygon, angle, spacing, axes in fitted:
+        origin = np.asarray(polygon.centroid.coords[0])
+        own = _phasor(excess, polygon, angle, spacing, origin)
+        rests = []
+        for k in tree.query(polygon):
+            parcel = parcels[k]
+            if parcel.intersection(polygon).area < params.parcel_share * parcel.area:
+                continue
+            rest = _largest(parcel.difference(polygon))
+            if rest.area < 20:
+                continue
+            wave = _phasor(excess, rest, angle, spacing, origin)
+            shift = abs((np.angle(wave) - np.angle(own) + np.pi) % (2 * np.pi) - np.pi) / (2 * np.pi)
+            if abs(wave) >= params.parcel_gate * abs(own) and shift <= params.parcel_phase:
+                rests.append(rest)
+        if rests:
+            grown = _largest(unary_union([polygon, *rests]).buffer(0.01).buffer(-0.01).difference(roads.buffer(params.road_setback_m)))
+            if grown.area > polygon.area:
+                along, normal = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle))]), np.array([-np.sin(np.radians(angle)), np.cos(np.radians(angle))])
+                v = sorted(np.asarray(a.coords[0]) @ normal for a in axes)
+                ring = np.asarray(grown.exterior.coords) @ normal
+                centre, reach = np.asarray(grown.centroid.coords[0]), np.hypot(*np.subtract(grown.bounds[2:], grown.bounds[:2]))
+                line = lambda c: LineString([centre + (c - centre @ normal) * normal - reach * along, centre + (c - centre @ normal) * normal + reach * along])
+                for side, limit in ((-1, ring.min()), (1, ring.max())):
+                    c = v[0] if side < 0 else v[-1]
+                    # each new outer row is the ExG peak within 0.3 spacings of where the lattice predicts it
+                    while side * (limit - c) > spacing:
+                        inside = _longest(line(c + side * spacing).intersection(grown))
+                        if inside.length < params.min_row_m:
+                            break
+                        points = np.array([inside.interpolate(d).coords[0] for d in np.arange(0, inside.length, 0.2)])
+                        offsets = np.arange(-0.3, 0.3 + 1e-9, 0.05) * spacing
+                        c += side * spacing + offsets[int(np.argmax([excess.at(*(points + o * normal).T).mean() for o in offsets]))]
+                        v = [c] + v if side < 0 else v + [c]
+                axes = [line(c) for c in v]
+                polygon = grown
+        out.append((polygon, angle, spacing, axes))
+    return out
 
 
 def _merge(fitted: list, excess: _Excess, roads, params: PlotParams) -> list:
@@ -378,6 +448,8 @@ def detect_plots(params: PlotParams = PlotParams(), data_dir: Path = DATA_DIR, l
         quad, axes = result
         fitted.append((_largest(_onto_roads(quad, roads, params)), angle, spacing, axes))
     fitted = _merge(fitted, excess, roads, params) if params.merge_m else fitted
+    if params.parcel_share:
+        fitted = _fill_parcels(fitted, excess, roads, load_parcels(), params)
     # a bigger plot keeps an overlap, and a fit mostly inside an accepted plot is the same plot found twice
     plots, taken = [], Polygon()
     for polygon, angle, spacing, axes in sorted(fitted, key=lambda item: -item[0].area):

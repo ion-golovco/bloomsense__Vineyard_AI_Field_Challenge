@@ -117,13 +117,14 @@ for name in NAMES:
 
 default = CanopyParams()
 print(f"\ndefaults {default}\nvariant | both tiles | per tile: score, union IoU, instance F1, predicted/reference, pixel IoU, seconds")
-old = replace(default, green_dn=0, refine2_m=0, row_contrast=1.3, row_gap=0, row_value=0, close_m=0, inset_m=0)
+old = replace(default, green_dn=0, refine2_m=0, row_contrast=1.3, row_gap=0, row_value=0, close_m=0, inset_m=0, young_pieces=0, strip_gr=0)
 results = {"S": run("S defaults", default)}
 run("O previous defaults (ExG > 0.11, contrast 1.3)", old)
 run("U reference rows (diagnostic)", replace(default, refine_m=0, row_gap=0), reference_rows)
 print("\neach rule off, one at a time")
 for tag, change in (("normalised ExG > 0.11 instead of DN", dict(green_dn=0)), ("no inter-row drop", dict(row_gap=0)),
-                    ("no inter-row drop, contrast 1.3", dict(row_gap=0, row_contrast=1.3)), ("inter-row drop + contrast 1.3", dict(row_contrast=1.3)), ("no value-contrast test", dict(row_value=0)),
+                    ("no inter-row drop, contrast 1.3", dict(row_gap=0, row_contrast=1.3)), ("inter-row drop + contrast 1.3", dict(row_contrast=1.3)), ("no value-contrast test", dict(row_value=0)), ("no young-block minimum", dict(young_pieces=0)),
+                    ("no grass-strip rule", dict(strip_gr=0)),
                     ("no second refit", dict(refine2_m=0)), ("no refit (rows as given)", dict(refine_m=0)), ("no closing", dict(close_m=0)),
                     ("no inset", dict(inset_m=0)), ("no neck split", dict(split_neck=0)), ("Otsu threshold in the tube", dict(otsu=True))):
     run(f"S {tag}", replace(default, **change))

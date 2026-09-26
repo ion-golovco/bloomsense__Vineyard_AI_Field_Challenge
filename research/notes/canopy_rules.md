@@ -216,3 +216,81 @@ at 0.99–1.04.
    touching plants whose neck is shallower than 0.3.
 4. **Refresh the docs.** RESEARCH.md says "colour tuning is exhausted" and "canopy is limited by rows, not colour".
    Both are superseded: normalised ExG was the limit.
+
+## 26 September, 10:05–10:30: missing canopies site-wide, young blocks, grass strips
+
+The plots are the current `detect_plots()` output (`work/canopy_rules/plots_now.json`: 36 blocks). The canopy is the
+path predict.py calls, `canopy_net.tile_canopies(combine="and", threshold=0.2, flips=False)`. Before the changes below
+it reproduces predictions.geojson exactly: 13,279 canopies.
+
+### Where canopies are missing
+
+Sources: `canopy_rules_missing.py`, 131 tiles, 1.6 s each, and the sheets `work/canopy_rules/missing_*.jpg`.
+
+Vine green (2g−r−b > 25) inside ±0.3 m of every re-fitted predicted axis: 16,266 m². The canopy covers 14,271 m²
+(88%). Every piece of uncovered green was given one cause:
+
+| Cause | Green left uncovered | Worst tiles | What it is (from the sheets) |
+|---|---|---|---|
+| **Vineyard outline with no predicted block** | 26,301 of 141,987 m² of outline (18.5%); **about 2,900 canopies** at the site's 0.109 per m² | r037_c025 (1,764 m²), r031_c017 (1,679), r013_c009 (1,474), r035_c024 (1,468), r021_c011 (1,328), r027_c018 (1,090), r031_c020, r020_c010, r036_c026; outlines 8, 9 and 26 at 0% | **Mostly vine rows beyond the block edge**: the block polygon stops 1–5 rows short. Also dense rows the block misses entirely (r037_c025), weed-overgrown blocks and the orthomosaic edge. Row detection's domain (plots.py) |
+| Axis dropped by the mean-green test (`row_value`) | 1,277 m² (179 of 1,775 axes) | r031_c018 115, r036_c025 112, r033_c019 75, r007_c004 65, r033_c020 56 | Mostly weed- or grass-filled tubes in overgrown blocks, a correct drop. With the test off these would be the grass strips. Some vines in weeds on r036_c025 and r007_c004 |
+| Pieces under 0.2 m² | 569 m², 4,002 pieces of 0.05–0.2 m² | r038_c023, r020_c013, r019_c010, r021_c013, r036_c024 | **Young vines in P09** (plants at the stakes, 0.05–0.2 m²); elsewhere small clumps between plants |
+| Rows that stop short (0–5 m beyond each axis end, inside outlines) | 378 m² | r007_c003 38, r036_c025 32, r007_c004 27 | Mostly grass headlands and verges; plants only on r022_c012. Not safe to extend |
+| U-Net "and" filter | **97 m²** (rules 13,215 canopies / 13,594 m²; network 13,279 / 13,518) | r007_c004 18, r031_c019 12, r014_c004 8 | Mostly grass strips the network rightly rejects. **Not a cause of missing canopy** |
+| Axis dropped by the inter-row rule | 52 m² (7 axes) | r035_c021, r034_c022 | Verges |
+| Pale leaf margin (DN 12–25 touching canopy) | 2,444 m² | | The outline halo. Our area already matches the reference within 0.2%, so this is not missing |
+
+### Fixes kept in `canopy.py`
+
+Neither fix changes the two reference tiles:
+
+| Variant | Canopy | IoU | F1 | Counts |
+|---|---|---|---|---|
+| Rules alone | 0.855 | 0.821 | 0.905 | 402/399, 260/251 |
+| `canopy_net` "and" | 0.854 | | | 403/399, 260/251 |
+
+Both variants score the same with each rule on or off.
+
+1. **Young-block minimum area** (`young_m2` 0.05, `young_pieces` 10). The rules say "each plant is its own
+   polygon, however small", and the 0.2 m² limit is for weeds beside plants.
+   - The rule works per plot on one tile. When the median piece of at least 0.05 m² is under 0.2 m², the pieces are
+     the plants, and they are kept down to 0.05 m².
+   - It triggers on 7 of 137 plot-tile pairs: P09 on r036_c023, r037_c023 and r037_c024; P34, P08, P22, and P02 on
+     r019_c014.
+   - The reference tiles have medians of 0.42 and 0.43, well clear of the trigger.
+   - Site-wide it adds **275 canopies (26 m²): 238 in P09**, 29 in P34 and 8 in P22. `missing_young_added.jpg` shows
+     the added P09 and P22 pieces sit on the young plants at the stakes. The 29 in P34 sit in a weedy area and may be
+     weed clumps.
+2. **Grass-strip rule** (`strip_m` 8, `strip_gr` 15). A piece longer than 8 m along the row whose mean g−r is above
+   15 is dropped.
+   - Vine leaves in this flight are yellow-green. The mean g−r of reference canopies is 1.3–9.6, including all 12 of
+     r006's strips over 8 m (up to 56 m).
+   - Grass, weeds and a green roof filling the tube are bluish-green. The flagged 53–59 m strips (r029_c023,
+     r008_c002, r037_c024, r011_c007) score 16.6–27.9.
+   - Site-wide it removes **35 canopies (380 m²)**. Strips over 10 m go from 354 to 329 and over 5 m from 1,121 to
+     1,088. Area outside every outline drops by 92 m², on orchard outlines by 9 m². `missing_strips_removed.jpg` shows
+     the 15 largest are all grass, weeds or a roof.
+   - Between 10 and 14 the sheet `strips_gr_10_14.jpg` shows real vine hedges (r006_c003, r007_c003, r008_c003), so
+     the threshold stays at 15. The 329 remaining long strips are mixed hedges and grass and stay on the review list.
+   - A per-pixel hue cut was tried instead: g−r < 22 gives 0.853, and < 12–18 gives 0.776–0.851. It cuts into the
+     grassed-block strips the organizers drew, and would fragment grass into many pieces, so it was not used.
+
+Whole site, as predict.py calls it (`canopy_rules_site2.py`, 488 s for 4 variants on 131 tiles with the network run
+once per tile; peak RSS 0.76 GB):
+
+| Variant | Canopies | Area | Over 5 m | Over 10 m | Outside outlines | On orchard |
+|---|---|---|---|---|---|---|
+| Before | 13,279 | 13,518 m² | 1,121 | 354 | 975 m² | 277 m² |
+| Young only | 13,554 | 13,544 m² | 1,121 | 354 | 978 m² | 277 m² |
+| Strips only | 13,244 | 13,138 m² | 1,088 | 329 | 883 m² | 268 m² |
+| **After (defaults)** | **13,518** | **13,164 m²** | **1,088** | **329** | **886 m²** | **268 m²** |
+
+### Not fixed, and why
+
+- **Blocks that stop short of the outer rows** are the largest source of missing canopies (about 2,900). The canopy
+  follows predicted axes only, so this needs row detection in plots.py: grow each block to its last row with vine
+  green, and detect the rows it misses entirely.
+- **Rows that stop short**: the extension green is mostly grass headland.
+- **Axes dropped by the mean-green test**: those tubes are mostly weeds. Lowering the test brings the grass strips
+  back.
+- **U-Net filter**: not a cause (97 m², mostly grass).

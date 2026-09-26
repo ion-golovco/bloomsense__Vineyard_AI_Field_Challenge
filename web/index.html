@@ -17,12 +17,12 @@
           <span><strong>Agrocontrol</strong><small>by BloomSense</small></span>
         </div>
         <nav aria-label="Sections">
-          <button type="button" data-nav="map" aria-current="page" title="Map"><b aria-hidden="true">▦</b><span>Map</span></button>
-          <button type="button" data-nav="fields" title="Fields"><b aria-hidden="true">▧</b><span>Fields</span></button>
-          <button type="button" data-nav="visits" title="Visit points"><b aria-hidden="true">◎</b><span>Visits</span></button>
-          <button type="button" data-nav="impact" title="Savings"><b aria-hidden="true">↘</b><span>Savings</span></button>
+          <button type="button" data-nav="per-field" aria-current="page" title="Per field"><b aria-hidden="true">▧</b><span>Per field</span></button>
+          <button type="button" data-nav="all-fields" title="All fields"><b aria-hidden="true">▦</b><span>All fields</span></button>
+          <button type="button" data-nav="analysis" title="NDVI / NDMI / Cadastru"><b aria-hidden="true">◈</b><span>NDVI / NDMI<small>Cadastru</small></span></button>
+          <button type="button" data-nav="yield" title="Yield &amp; harvest"><b aria-hidden="true">↗</b><span>Yield &amp; harvest</span></button>
         </nav>
-        <span class="nav-foot">FIELD VIEW</span>
+        <span class="nav-foot">AGROCONTROL · BLOOMSENSE</span>
       </aside>
 
       <p id="status" class="scene-banner" role="status" aria-live="polite">Loading the current field scene…</p>
@@ -76,28 +76,84 @@
         </div>
       </section>
 
+      <section class="overview floating" id="overview-panel" aria-labelledby="overview-title" hidden>
+        <span class="section-kicker">FARM OVERVIEW</span>
+        <h1 id="overview-title" tabindex="-1">All fields</h1>
+        <p>Choose a field on the map or in the list to open its inspection plan.</p>
+        <div class="overview-stats"><div><strong id="overview-count">—</strong><span>Fields</span></div><div><strong id="overview-points">—</strong><span>Visit points</span></div></div>
+        <label class="sr-only" for="field-search">Search fields</label>
+        <input id="field-search" type="search" placeholder="Search fields…" />
+        <div id="field-list" class="field-list"></div>
+      </section>
+
+      <section class="analysis-panel floating" id="analysis-panel" aria-labelledby="analysis-title" hidden>
+        <span class="section-kicker">SATELLITE &amp; LAND RECORDS</span>
+        <h2 id="analysis-title" tabindex="-1">NDVI / NDMI / Cadastru</h2>
+        <div class="analysis-tabs" role="group" aria-label="Analysis layers">
+          <button type="button" data-analysis="ndvi" aria-pressed="true">NDVI</button>
+          <button type="button" data-analysis="ndmi" aria-pressed="false">NDMI</button>
+          <button type="button" data-analysis="cadastre" aria-pressed="false">Cadastru</button>
+        </div>
+        <div class="analysis-state"><span id="analysis-badge" class="availability">NOT AVAILABLE</span><h3 id="analysis-state-title">No NDVI observations</h3><p id="analysis-detail">The current field scene does not include satellite observations.</p></div>
+        <dl class="analysis-facts"><div><dt>Field</dt><dd id="analysis-field">—</dd></div><div><dt>Observation dates</dt><dd id="analysis-dates">—</dd></div><div><dt>Map overlay</dt><dd id="analysis-count">—</dd></div></dl>
+        <p class="analysis-footnote" id="analysis-footnote">The violet outline is the field boundary, not a satellite health layer.</p>
+      </section>
+
+      <main class="yield-page" id="yield-page" aria-labelledby="yield-title" hidden>
+        <header class="yield-header"><div><span class="section-kicker">FARM RECORDS</span><h1 id="yield-title" tabindex="-1">Yield &amp; harvest</h1><p>Add what you expect to harvest and what you actually picked.</p></div><span class="storage-badge">Saved on this browser</span></header>
+        <div class="yield-summary"><div><span>Reported harvest</span><strong id="harvest-total">0 kg</strong></div><div><span>Grower estimates</span><strong id="estimate-total">0 kg</strong></div><div><span>Entries</span><strong id="yield-record-count">0</strong></div></div>
+        <div class="yield-grid">
+          <section class="record-card" aria-labelledby="yield-form-title">
+            <h2 id="yield-form-title">Add a record</h2><p class="form-lead">One field, one date, one quantity. Price and notes are optional.</p>
+            <form id="yield-form">
+              <label>Field<select id="yield-field" required disabled><option value="">Loading fields…</option></select></label>
+              <label>Record type<select id="yield-kind"><option value="reported">Reported harvest</option><option value="estimate">Grower estimate</option></select></label>
+              <div class="form-pair"><label>Date <span>record date</span><input id="yield-date" type="date" required /></label><label>Quantity <span>kg</span><input id="yield-quantity" type="number" inputmode="decimal" min="0.01" step="any" required placeholder="e.g. 2400" /></label></div>
+              <label>Crop / variety <span>optional</span><input id="yield-crop" maxlength="100" placeholder="e.g. Grapes · Moldova" /></label>
+              <label>Price <span>MDL / kg · optional</span><input id="yield-price" type="number" inputmode="decimal" min="0" step="any" placeholder="Leave blank if unknown" /></label>
+              <label>Notes <span>optional</span><textarea id="yield-notes" rows="3" maxlength="1000" placeholder="Picking, quality, or other details…"></textarea></label>
+              <div class="form-actions"><button id="yield-save" class="primary-button" type="submit" disabled>Save record</button><button id="yield-cancel" class="secondary-button" type="button" hidden>Cancel edit</button></div>
+              <p id="yield-message" class="form-message" role="status" aria-live="polite"></p>
+            </form>
+          </section>
+          <section class="record-card record-history" aria-labelledby="yield-history-title"><div class="history-heading"><h2 id="yield-history-title">Your records</h2><button id="yield-export" class="secondary-button" type="button" disabled>Export CSV</button></div><p class="form-lead">Totals cover all saved dates. Harvest totals include reported pickings only; estimates are kept separately.</p><div id="yield-records"></div><button id="yield-undo" class="secondary-button" type="button" hidden>Undo removal</button></section>
+        </div>
+        <p class="yield-storage-note">Records stay on this browser and are not synced to an account. Export a copy to keep them elsewhere. A saved estimate does not mark a field as harvested.</p>
+      </main>
+
       <div class="map-tools floating" role="group" aria-label="Map controls">
-        <button type="button" data-base="street" aria-pressed="true" aria-label="Street map" title="Street map">▦ <span>Street</span></button>
-        <button type="button" data-base="drone" aria-pressed="false" aria-label="Drone image" title="Drone image">◈ <span>Drone</span></button>
+        <button id="canopy-toggle" type="button" aria-pressed="true" title="Canopy segmentation" aria-label="Canopy segmentation">◉ <span>Canopy</span></button>
         <details class="layers-menu" id="layers-menu">
           <summary title="Map layers" aria-label="Map layers">▤ <span>Layers</span></summary>
           <div>
-            <label><input type="checkbox" data-layer="field" checked /> Field boundary</label>
-            <label><input type="checkbox" data-layer="route" checked /> Route</label>
-            <label><input type="checkbox" data-layer="points" checked /> Visit points</label>
-            <label><input type="checkbox" data-layer="row" /> Vine rows</label>
-            <label><input type="checkbox" data-layer="vineyard" /> Canopies</label>
-            <label><input type="checkbox" data-layer="interrow_area" /> Inter-rows</label>
-            <label><input type="checkbox" data-layer="access" /> Access areas</label>
+            <label><input type="checkbox" data-layer="field" checked /> <span id="field-layer-label">Field boundaries</span></label>
+            <label><input type="checkbox" data-layer="route" checked /> <span id="route-layer-label">Routes</span></label>
+            <label><input type="checkbox" data-layer="points" checked /> <span id="points-layer-label">Visit points</span></label>
+            <label><input type="checkbox" data-layer="row" /> <span id="row-layer-label">Vine rows</span></label>
+            <label><input type="checkbox" data-layer="vineyard" checked /> <span id="vineyard-layer-label">Canopy segmentation</span></label>
+            <label><input type="checkbox" data-layer="interrow_area" /> <span id="interrow_area-layer-label">Inter-rows</span></label>
+            <label><input type="checkbox" data-layer="access" /> <span id="access-layer-label">Access areas</span></label>
+            <label><input type="checkbox" data-layer="ndvi" /> <span id="ndvi-layer-label">NDVI zones</span></label>
+            <label><input type="checkbox" data-layer="ndmi" /> <span id="ndmi-layer-label">NDMI zones</span></label>
+            <label><input type="checkbox" data-layer="start" /> <span id="start-layer-label">Inspection start</span></label>
+            <label><input type="checkbox" data-layer="cadastre" /> <span id="cadastre-layer-label">Cadastru</span></label>
           </div>
         </details>
       </div>
 
       <div class="map-key floating" aria-label="Map legend">
-        <span><i class="key-field" aria-hidden="true"></i>Selected field</span>
-        <span><i class="key-route" aria-hidden="true"></i>Inspection route</span>
-        <span><i class="key-stop" aria-hidden="true"></i>Visit point</span>
-        <span class="key-credit"><a id="map-credit" href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a></span>
+        <span><i class="key-field" aria-hidden="true"></i><span id="field-key-label">Selected field</span></span>
+        <span id="route-key"><i class="key-route" aria-hidden="true"></i>Inspection route</span>
+        <span id="stop-key"><i class="key-stop" aria-hidden="true"></i>Visit point</span>
+        <span id="row-key" hidden><i class="key-row" aria-hidden="true"></i>Vine rows</span>
+        <span id="canopy-key"><i class="key-canopy" aria-hidden="true"></i>Canopy segmentation</span>
+        <span id="access-key" hidden><i class="key-access" aria-hidden="true"></i>Access &amp; constraints</span>
+        <span id="interrow-key" hidden><i class="key-interrow" aria-hidden="true"></i>Inter-rows</span>
+        <span id="start-key" hidden><i class="key-start" aria-hidden="true"></i>Inspection start</span>
+        <span id="ndvi-key" hidden><i class="key-ndvi" aria-hidden="true"></i>NDVI zones</span>
+        <span id="ndmi-key" hidden><i class="key-ndmi" aria-hidden="true"></i>NDMI zones</span>
+        <span id="cadastre-key" hidden><i class="key-cadastre" aria-hidden="true"></i>Cadastru</span>
+        <span class="key-credit"><a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a><a href="https://creativecommons.org/licenses/by/4.0/">Drone: 3DATA COLLECT / OpenAerialMap · CC BY 4.0</a></span>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

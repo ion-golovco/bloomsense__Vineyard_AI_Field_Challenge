@@ -1,11 +1,10 @@
 import L from 'leaflet';
-import type { Feature, FeatureCollection, Geometry } from 'geojson';
+import type { AppView, MapFeature, Scene } from './scene-types';
+import { createMapViews } from './map-views';
+import { initializeYieldView, updateYieldFields } from './yield-view';
 import './style.css';
 
-type Props = { label: string; source?: string; vineyard_id?: string; row_id?: string; target_id?: string; reason?: string; area_m2?: number; length_m?: number };
-type MapFeature = Feature<Geometry, Props>;
-type Scene = { crs: string; features: FeatureCollection<Geometry, Props>; metrics?: { route_length_m?: number } };
-type Overlay = 'field' | 'route' | 'points' | 'row' | 'vineyard' | 'interrow_area' | 'access';
+type Overlay = 'field' | 'route' | 'points' | 'row' | 'vineyard' | 'interrow_area' | 'access' | 'ndvi' | 'ndmi' | 'cadastre' | 'start';
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 const currency = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const el = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -20,21 +19,34 @@ const input = (id: string): number | null => {
   const value = Number(raw);
   return Number.isFinite(value) && value >= 0 ? value : null;
 };
-const map = L.map('map', { preferCanvas: true, zoomControl: false, zoomSnap: 0.25, maxZoom: 19 });
-const street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+const map = L.map('map', { preferCanvas: true, zoomControl: false, zoomSnap: 0.25, maxZoom: 22 });
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxNativeZoom: 19, maxZoom: 22, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
 }).addTo(map);
-const drone = L.tileLayer('/api/imagery/{z}/{x}/{y}.png', {
+L.tileLayer('/api/imagery/{z}/{x}/{y}.png', {
   minZoom: 13, maxNativeZoom: 22, maxZoom: 22,
-  attribution: 'Sireț3 imagery CC BY 4.0, 3DATA COLLECT / OpenAerialMap',
-});
+  attribution: 'Drone: 3DATA COLLECT / OpenAerialMap · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>',
+}).addTo(map);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 map.setView([47.12, 28.71], 14);
+const featurePanes: Record<Overlay, string> = {
+  field: 'field-boundaries', route: 'inspection-routes', points: 'visit-points',
+  row: 'vine-rows', vineyard: 'canopy-segmentation', interrow_area: 'interrow-segmentation', access: 'access-areas',
+  ndvi: 'ndvi-zones', ndmi: 'ndmi-zones', cadastre: 'cadastral-parcels', start: 'visit-points',
+};
+for (const [name, zIndex] of [['access-areas', 405], ['interrow-segmentation', 410], ['canopy-segmentation', 415], ['vine-rows', 420], ['ndvi-zones', 421], ['ndmi-zones', 422], ['cadastral-parcels', 423], ['field-boundaries', 425], ['inspection-routes', 435], ['visit-points', 445]] as const) {
+  map.createPane(name).style.zIndex = String(zIndex);
+}
 const overlays: Record<Overlay, L.LayerGroup> = {
   field: L.layerGroup(), route: L.layerGroup(), points: L.layerGroup(),
   row: L.layerGroup(), vineyard: L.layerGroup(), interrow_area: L.layerGroup(), access: L.layerGroup(),
+  ndvi: L.layerGroup(), ndmi: L.layerGroup(), cadastre: L.layerGroup(), start: L.layerGroup(),
 };
-const visible = new Set<Overlay>(['field', 'route', 'points']);
+const fieldVisible = new Set<Overlay>(['field', 'route', 'points', 'vineyard']);
+const allVisible = new Set<Overlay>(['field', 'route', 'points', 'row', 'vineyard', 'interrow_area', 'access', 'ndvi', 'ndmi', 'cadastre', 'start']);
+let visible = fieldVisible;
+let layerCounts: Record<Overlay, number> = { field: 0, route: 0, points: 0, row: 0, vineyard: 0, interrow_area: 0, access: 0, ndvi: 0, ndmi: 0, cadastre: 0, start: 0 };
+const layerNames: Record<Overlay, string> = { field: 'Field boundaries', route: 'Routes', points: 'Visit points', row: 'Vine rows', vineyard: 'Canopy segmentation', interrow_area: 'Inter-rows', access: 'Access & constraints', ndvi: 'NDVI zones', ndmi: 'NDMI zones', cadastre: 'Cadastru', start: 'Inspection start' };
 const usualByField = new Map<string, string>();
 const pointLayers = new Map<MapFeature, L.Layer>();
 let scene: Scene | null = null;
@@ -44,10 +56,23 @@ let boundary: L.GeoJSON | null = null;
 let targets: MapFeature[] = [];
 let routes: MapFeature[] = [];
 let routeLength: number | null = null;
+let view: AppView = 'per-field';
+const farmViews = createMapViews(map, {
+  fields: () => fields, selected: () => field, features: () => scene?.features.features ?? [],
+  select: (id) => { selectField(id); navigateView('per-field'); },
+});
+initializeYieldView();
 const fieldId = (item: MapFeature): string => item.properties.vineyard_id ?? '';
 const belongsToField = (item: MapFeature): boolean => item.properties.vineyard_id === fieldId(field!) ||
   (fields.length === 1 && !item.properties.vineyard_id);
 
+function popupOptions(): L.PopupOptions {
+  const width = window.innerWidth;
+  return {
+    autoPanPaddingTopLeft: L.point(width <= 700 ? [108, 340] : width <= 1020 ? [390, 370] : [550, 170]),
+    autoPanPaddingBottomRight: L.point(width <= 700 ? [12, 270] : width <= 1020 ? [20, 145] : [340, 145]),
+  };
+}
 function popupFor(item: MapFeature): HTMLDivElement {
   const popup = document.createElement('div');
   popup.className = 'map-popup';
@@ -65,12 +90,12 @@ function popupFor(item: MapFeature): HTMLDivElement {
 }
 function addFeature(item: MapFeature, group: Overlay, style: L.PathOptions): L.GeoJSON {
   const layer = L.geoJSON(item, {
-    style,
+    pane: featurePanes[group], style,
     pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
-      radius: 9, color: '#fff', weight: 2.5, fillColor: '#ed7625', fillOpacity: 1,
+      pane: featurePanes[group], radius: group === 'start' ? 7 : 9, color: '#fff', weight: 2.5, fillColor: group === 'start' ? '#24221f' : '#ed7625', fillOpacity: 1,
     }),
     onEachFeature: (_feature, mapped) => {
-      mapped.bindPopup(popupFor(item));
+      mapped.bindPopup(() => popupFor(item), popupOptions());
       if (group === 'points') pointLayers.set(item, mapped);
     },
   });
@@ -79,30 +104,43 @@ function addFeature(item: MapFeature, group: Overlay, style: L.PathOptions): L.G
 }
 function applyVisibility(): void {
   for (const [name, group] of Object.entries(overlays) as [Overlay, L.LayerGroup][]) {
-    if (visible.has(name) && !map.hasLayer(group)) group.addTo(map);
-    if (!visible.has(name) && map.hasLayer(group)) map.removeLayer(group);
+    const shown = ((view === 'per-field' || (view === 'all-fields' && name !== 'field')) && visible.has(name)) || (view === 'analysis' && name === 'field');
+    if (shown && !map.hasLayer(group)) group.addTo(map);
+    if (!shown && map.hasLayer(group)) map.removeLayer(group);
   }
   for (const checkbox of document.querySelectorAll<HTMLInputElement>('[data-layer]')) {
-    checkbox.checked = visible.has(checkbox.dataset.layer as Overlay);
+    const name = checkbox.dataset.layer as Overlay;
+    checkbox.checked = visible.has(name) && layerCounts[name] > 0;
+    checkbox.disabled = layerCounts[name] === 0;
+    text(`${name}-layer-label`, `${layerNames[name]} (${layerCounts[name]})`);
   }
+  el<HTMLButtonElement>('canopy-toggle').setAttribute('aria-pressed', String(visible.has('vineyard')));
+  el<HTMLButtonElement>('canopy-toggle').disabled = layerCounts.vineyard === 0;
+  for (const [id, name] of [['canopy-key', 'vineyard'], ['row-key', 'row'], ['route-key', 'route'], ['stop-key', 'points'], ['ndvi-key', 'ndvi'], ['ndmi-key', 'ndmi'], ['cadastre-key', 'cadastre'], ['access-key', 'access'], ['interrow-key', 'interrow_area'], ['start-key', 'start']] as const) {
+    el(id).hidden = (view !== 'per-field' && view !== 'all-fields') || !visible.has(name) || layerCounts[name] === 0;
+  }
+  farmViews.show(view, visible.has('field'));
   const toggle = el<HTMLButtonElement>('route-toggle');
   toggle.setAttribute('aria-pressed', String(routes.length > 0 && visible.has('route')));
   toggle.firstChild!.textContent = routes.length === 0 ? 'Route unavailable ' : visible.has('route') ? 'Hide route ' : 'Show route ';
 }
 function fitField(): void {
+  if (view === 'yield') return;
+  if (view === 'all-fields') { farmViews.fitOverview(); return; }
   if (!boundary) return;
   const width = window.innerWidth;
-  const paddingTopLeft: L.PointTuple = width <= 700 ? [12, 300] : width <= 1020 ? [390, 320] : [420, 145];
-  const paddingBottomRight: L.PointTuple = width <= 700 ? [12, 265] : width <= 1020 ? [20, 145] : [340, 130];
+  const paddingTopLeft: L.PointTuple = width <= 700 ? [12, view === 'analysis' ? 180 : 300] : width <= 1020 ? [390, 320] : [550, 145];
+  const paddingBottomRight: L.PointTuple = width <= 700 ? [12, view === 'analysis' ? 350 : 265] : width <= 1020 || view === 'analysis' ? [20, 145] : [340, 130];
   map.fitBounds(boundary.getBounds().pad(0.18), { paddingTopLeft, paddingBottomRight, maxZoom: 18 });
 }
 function focusPoint(item: MapFeature): void {
   const layer = pointLayers.get(item);
-  if (!layer || item.geometry.type !== 'Point') return;
-  const [lng, lat] = item.geometry.coordinates;
-  map.setView([lat, lng], Math.max(map.getZoom(), 18));
+  if (!layer) return;
+  const bounds = L.geoJSON(item).getBounds();
+  if (!bounds.isValid()) return;
+  map.setView(bounds.getCenter(), Math.max(map.getZoom(), 18), { animate: false });
   if (!visible.has('points')) { visible.add('points'); applyVisibility(); }
-  layer.openPopup();
+  layer.bindPopup(() => popupFor(item), popupOptions()).openPopup();
 }
 function renderStops(): void {
   const list = el('stop-list');
@@ -185,37 +223,73 @@ function renderField(): void {
     color: '#7e22ce', weight: 5, fillColor: '#a132ea', fillOpacity: 0.19,
     dashArray: field.properties.source === 'prediction' ? '12 7' : undefined,
   });
-  boundary.bindTooltip(`Field ${fieldId(field)}${field.properties.source === 'prediction' ? ' · candidate boundary' : ''}`, { sticky: true });
+  const boundaryLabel = document.createElement('span');
+  boundaryLabel.textContent = `Field ${fieldId(field)}${field.properties.source === 'prediction' ? ' · candidate boundary' : ''}`;
+  boundary.bindTooltip(boundaryLabel, { sticky: true });
   targets = []; routes = [];
+  layerCounts = { field: view === 'all-fields' ? fields.length : 1, route: 0, points: 0, row: 0, vineyard: 0, interrow_area: 0, access: 0, ndvi: 0, ndmi: 0, cadastre: 0, start: 0 };
   for (const item of scene.features.features) {
     const { label } = item.properties;
     if (item === field) continue;
-    if (label === 'passage' || label === 'forbidden') {
+    if (label === 'passage' || label === 'forbidden' || label === 'study_area') {
+      layerCounts.access += 1;
       addFeature(item, 'access', label === 'forbidden'
         ? { color: '#a83e38', weight: 2, fillColor: '#db7770', fillOpacity: 0.15 }
+        : label === 'study_area' ? { color: '#526252', weight: 2, dashArray: '6 5', fill: false }
         : { color: '#ba7e30', weight: 2, fillColor: '#e6ba70', fillOpacity: 0.18 });
       continue;
     }
-    if (!belongsToField(item)) continue;
-    if (label === 'route') {
-      routes.push(item);
+    if (['cadastre', 'parcel'].includes(label)) {
+      if (view === 'all-fields' || !item.properties.vineyard_id || belongsToField(item)) {
+        layerCounts.cadastre += 1;
+        addFeature(item, 'cadastre', { color: '#db2777', weight: 2.5, fillOpacity: 0.08 });
+      }
+      continue;
+    }
+    if (view !== 'all-fields' && !belongsToField(item)) continue;
+    if (label === 'start') {
+      layerCounts.start += 1;
+      addFeature(item, 'start', {});
+    } else if (label === 'route') {
+      layerCounts.route += 1;
+      if (belongsToField(item)) routes.push(item);
       addFeature(item, 'route', { color: '#fff', weight: 11, opacity: 0.95, interactive: false });
       addFeature(item, 'route', { color: '#ed7625', weight: 6, opacity: 1, dashArray: '12 8' });
     } else if (label === 'inspection' || label === 'waste') {
-      targets.push(item); addFeature(item, 'points', {});
+      layerCounts.points += 1;
+      if (belongsToField(item)) targets.push(item);
+      if (item.geometry.type === 'Point') addFeature(item, 'points', {});
+      else {
+        const outline = addFeature(item, 'points', { color: '#ed7625', weight: 2, fillColor: '#ed7625', fillOpacity: 0.35 });
+        const bounds = outline.getBounds();
+        if (bounds.isValid()) {
+          const marker = L.circleMarker(bounds.getCenter(), { pane: featurePanes.points, radius: 9, color: '#fff', weight: 2.5, fillColor: '#ed7625', fillOpacity: 1 })
+            .bindPopup(() => popupFor(item), popupOptions()).addTo(overlays.points);
+          pointLayers.set(item, marker);
+        }
+      }
     } else if (label === 'row') {
-      addFeature(item, 'row', { color: '#7448ad', weight: 2, opacity: 0.8 });
+      layerCounts.row += 1;
+      addFeature(item, 'row', { color: '#d52e36', weight: map.getZoom() >= 18 ? 2.5 : 1.25, opacity: 0.85 });
     } else if (label === 'vineyard') {
-      addFeature(item, 'vineyard', { color: '#a7742b', weight: 1.5, fillColor: '#d09b4e', fillOpacity: 0.28 });
+      layerCounts.vineyard += 1;
+      addFeature(item, 'vineyard', { color: '#078ca0', weight: 1, fillColor: '#10bdd0', fillOpacity: 0.5 });
     } else if (label === 'interrow_area') {
+      layerCounts.interrow_area += 1;
       addFeature(item, 'interrow_area', { color: '#397d95', weight: 1.2, fillColor: '#5a9cad', fillOpacity: 0.18 });
+    } else if (label === 'sentinel_zone' && (item.properties.index === 'ndvi' || item.properties.index === 'ndmi')) {
+      const name = item.properties.index;
+      layerCounts[name] += 1;
+      const color = name === 'ndvi' ? '#c68412' : '#0284c7';
+      addFeature(item, name, { color, weight: 2.5, fillColor: color, fillOpacity: 0.28 });
     }
   }
   routeLength = measuredRouteLength();
   const area = field.properties.area_m2;
-  text('field-meta', `${typeof area === 'number' && Number.isFinite(area) ? `${number.format(area / 10_000)} ha · ` : ''}${field.properties.source === 'prediction' ? 'Candidate boundary from the model' : 'Mapped field boundary'}`);
-  text('status', `${fields.length} fields in scene · ${routes.length ? 'field route available' : 'field route pending'}`);
+  text('field-meta', `${typeof area === 'number' && Number.isFinite(area) ? `${(area / 10_000).toFixed(2)} ha · ` : ''}${field.properties.source === 'prediction' ? 'Candidate boundary from the model' : 'Mapped field boundary'}`);
+  updateViewStatus();
   renderStops(); updateSavings(); applyVisibility();
+  farmViews.refreshAnalysis();
   requestAnimationFrame(fitField);
 }
 function renderScene(data: Scene): void {
@@ -232,6 +306,8 @@ function renderScene(data: Scene): void {
     option.value = fieldId(item); option.textContent = `Field ${fieldId(item)}`;
     select.append(option);
   }
+  farmViews.refreshOverview();
+  updateYieldFields(fields.map(fieldId), fields.length ? fieldId(fields[0]) : null);
   select.disabled = fields.length === 0;
   el<HTMLButtonElement>('fit-field').disabled = fields.length === 0;
   if (!fields.length) {
@@ -247,12 +323,19 @@ function renderScene(data: Scene): void {
   renderField();
 }
 
-el<HTMLSelectElement>('field-select').addEventListener('change', (event) => {
-  const select = event.currentTarget as HTMLSelectElement;
+function selectField(id: string): void {
   if (field) usualByField.set(fieldId(field), el<HTMLInputElement>('usual-minutes').value);
-  field = fields.find((item) => fieldId(item) === select.value) ?? null;
+  field = fields.find((item) => fieldId(item) === id) ?? null;
+  el<HTMLSelectElement>('field-select').value = id;
   el<HTMLInputElement>('usual-minutes').value = field ? usualByField.get(fieldId(field)) ?? '' : '';
   renderField();
+}
+el<HTMLSelectElement>('field-select').addEventListener('change', (event) => {
+  selectField((event.currentTarget as HTMLSelectElement).value);
+});
+el('canopy-toggle').addEventListener('click', () => {
+  if (visible.has('vineyard')) visible.delete('vineyard'); else visible.add('vineyard');
+  applyVisibility();
 });
 el('fit-field').addEventListener('click', fitField);
 for (const checkbox of document.querySelectorAll<HTMLInputElement>('[data-layer]')) {
@@ -277,31 +360,50 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-panel]'
     }
   });
 }
-for (const button of document.querySelectorAll<HTMLButtonElement>('[data-base]')) {
-  button.addEventListener('click', () => {
-    const useDrone = button.dataset.base === 'drone';
-    map.setMaxZoom(useDrone ? 22 : 19);
-    if (useDrone) { map.removeLayer(street); drone.addTo(map); }
-    else { map.removeLayer(drone); street.addTo(map); }
-    for (const item of document.querySelectorAll<HTMLButtonElement>('[data-base]')) item.setAttribute('aria-pressed', String(item === button));
-    const credit = el<HTMLAnchorElement>('map-credit');
-    credit.textContent = useDrone ? 'Sireț3 imagery · 3DATA COLLECT / OpenAerialMap' : '© OpenStreetMap contributors';
-    credit.href = useDrone ? 'https://openaerialmap.org/' : 'https://www.openstreetmap.org/copyright';
-  });
+function viewFromHash(): AppView {
+  const hash = location.hash.slice(1);
+  return hash === 'all-fields' || hash === 'analysis' || hash === 'yield' ? hash : 'per-field';
+}
+function updateViewStatus(): void {
+  if (!scene) return;
+  const pointCount = scene.features.features.filter((item) => ['inspection', 'waste'].includes(item.properties.label)).length;
+  text('status', view === 'all-fields' ? `${fields.length} fields · ${pointCount} visit points across the scene` : view === 'analysis' ? `Satellite & land records · ${field ? `Field ${fieldId(field)}` : 'no field selected'}` : `${fields.length} fields in scene · ${routes.length ? 'field route available' : 'field route pending'}`);
+}
+function switchView(next: AppView, focus = true): void {
+  view = next;
+  visible = view === 'all-fields' ? allVisible : fieldVisible;
+  document.body.dataset.view = view;
+  el('map').setAttribute('aria-label', view === 'all-fields' ? 'Map of all vineyard fields' : 'Map of the selected vineyard field');
+  updateViewStatus();
+  el('overview-panel').hidden = view !== 'all-fields';
+  el('analysis-panel').hidden = view !== 'analysis';
+  el('yield-page').hidden = view !== 'yield';
+  text('field-key-label', view === 'all-fields' ? 'Field boundaries' : 'Selected field');
+  el('route-key').hidden = view !== 'per-field';
+  el('stop-key').hidden = view !== 'per-field';
+  for (const item of document.querySelectorAll<HTMLButtonElement>('[data-nav]')) {
+    if (item.dataset.nav === view) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
+  }
+  if (scene && field) renderField();
+  else applyVisibility();
+  const titles = { 'per-field': 'Per field', 'all-fields': 'All fields', analysis: 'NDVI / NDMI / Cadastru', yield: 'Yield & harvest' };
+  document.title = `${titles[view]} · Agrocontrol by BloomSense`;
+  if (focus) el(view === 'yield' ? 'yield-title' : view === 'analysis' ? 'analysis-title' : view === 'all-fields' ? 'overview-title' : 'field-select').focus();
+  if (view !== 'yield') requestAnimationFrame(() => { map.invalidateSize(); fitField(); });
+}
+function navigateView(next: AppView): void {
+  if (location.hash.slice(1) === next) switchView(next); else location.hash = next;
 }
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-nav]')) {
-  button.addEventListener('click', () => {
-    for (const item of document.querySelectorAll<HTMLButtonElement>('[data-nav]')) {
-      if (item === button) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
-    }
-    switch (button.dataset.nav) {
-      case 'map': fitField(); break;
-      case 'fields': el<HTMLSelectElement>('field-select').focus(); break;
-      case 'visits': el<HTMLButtonElement>('visits-tab').click(); el('plan-panel').focus(); break;
-      case 'impact': el<HTMLDetailsElement>('assumptions').open = true; el<HTMLInputElement>('usual-minutes').focus(); break;
-    }
-  });
+  button.addEventListener('click', () => navigateView(button.dataset.nav as AppView));
 }
+window.addEventListener('hashchange', () => switchView(viewFromHash()));
+switchView(viewFromHash(), false);
+map.on('zoomend', () => {
+  for (const layer of overlays.row.getLayers()) {
+    if (layer instanceof L.GeoJSON) layer.setStyle({ weight: map.getZoom() >= 18 ? 2.5 : 1.25 });
+  }
+});
 window.addEventListener('resize', () => { map.invalidateSize(); fitField(); });
 async function loadScene(): Promise<void> {
   try {
@@ -317,6 +419,7 @@ async function loadScene(): Promise<void> {
     el<HTMLButtonElement>('fit-field').disabled = true;
     text('status', `Could not load fields: ${error instanceof Error ? error.message : 'unknown error'}`);
     text('field-meta', 'Start the field service to load current boundaries.');
+    farmViews.refreshOverview(); updateYieldFields([], null);
     text('plan-summary', 'Visit points and routes are unavailable.'); text('target-count', '—');
   }
 }

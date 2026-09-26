@@ -1,16 +1,22 @@
 """The whole prediction: plots and row axes, inter-rows, canopies, waste boxes, and per-tile row and inter-row attributes, written to
 data/generated/predictions.geojson for the lab and marcaj-pack. Run: uv run --frozen python -m marcaj.predict"""
 
+import csv
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
 
+from shapely.geometry import shape
+
 from marcaj import canopy, canopy_net, plots, rows, waste
 from marcaj.layers import Layers
-from marcaj.tiles import DATA_DIR, REPO_ROOT, Tile, load_tiles
+from marcaj.tiles import DATA_DIR, PIXEL_M, REPO_ROOT, TILE_PX, Tile, load_tiles
 
 PREDICTIONS_PATH = REPO_ROOT / "data" / "generated" / "predictions.geojson"
+FLAGS_PATH = REPO_ROOT / "data" / "generated" / "canopy_flags.csv"
+LONG_CANOPY_M = 3.0  # a vine canopy is 1-2 m along the row; longer is probably merged plants, worth a look in Marcaj
 
 
 def predict(params: plots.PlotParams = plots.PlotParams(), data_dir: Path = DATA_DIR, tiles: list[Tile] | None = None,
@@ -32,6 +38,37 @@ def write(features: list[dict[str, Any]], path: Path = PREDICTIONS_PATH) -> Path
     return path
 
 
+def canopy_flags(features: list[dict[str, Any]], min_m: float = LONG_CANOPY_M) -> list[dict[str, Any]]:
+    """Canopies longer than `min_m` (long side of the minimum rotated rectangle), longest first, with the tile and
+    pixel position to find them in Marcaj. A review list only: the organizers' own examples hold canopies up to 56 m
+    (26% and 42% over 2 m), and cutting by length scored worse there (research/notes/canopy_rules.md)."""
+    flags = []
+    extent = TILE_PX * PIXEL_M
+    for feature in features:
+        if feature["properties"]["label"] != "vineyard":
+            continue
+        geometry = shape(feature["geometry"])
+        corners = list(geometry.minimum_rotated_rectangle.exterior.coords)
+        length = max(math.dist(corners[0], corners[1]), math.dist(corners[1], corners[2]))
+        if length <= min_m:
+            continue
+        point = geometry.representative_point()
+        r, c = math.floor((5221222.4 - point.y) / extent), math.floor((point.x - 628992.0) / extent)
+        flags.append({"tile": f"siret3_r{r:03d}_c{c:03d}.tif", "x_px": round((point.x - 628992.0 - c * extent) / PIXEL_M),
+                      "y_px": round((5221222.4 - r * extent - point.y) / PIXEL_M), "length_m": round(length, 1),
+                      "area_m2": round(geometry.area, 2), "vineyard_id": feature["properties"].get("vineyard_id", ""),
+                      "easting": round(point.x, 2), "northing": round(point.y, 2)})
+    return sorted(flags, key=lambda flag: -flag["length_m"])
+
+
+def write_flags(flags: list[dict[str, Any]], path: Path = FLAGS_PATH) -> Path:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["tile", "x_px", "y_px", "length_m", "area_m2", "vineyard_id", "easting", "northing"])
+        writer.writeheader()
+        writer.writerows(flags)
+    return path
+
+
 if __name__ == "__main__":
     started = time.perf_counter()
     features = predict()
@@ -39,3 +76,5 @@ if __name__ == "__main__":
     for feature in features:
         counts[feature["properties"]["label"]] = counts.get(feature["properties"]["label"], 0) + 1
     print(f"{counts} in {time.perf_counter() - started:.1f} s -> {write(features)}")
+    flags = canopy_flags(features)
+    print(f"{len(flags)} canopies longer than {LONG_CANOPY_M} m to check in Marcaj -> {write_flags(flags)}")

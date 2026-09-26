@@ -18,10 +18,16 @@ Method, per tile and per predicted plot (`marcaj.plots.detect_plots` blocks and 
 3. Canopy = green inside the +-`tube_m` tube of the kept axes, closed with a disk of `close_m` (the rules
    trace leaves "within about 10 cm", so gaps under 10 cm inside one plant close; the median gap between
    pieces of one reference plant was 7 cm), holes filled (CVAT polygons hold none), 8-connected
-   components, split across the row at necks narrower than `split_neck` of the thinner side's peak width
-   (the rules split touching plants "where it visibly narrows"), components under `min_area_m2` dropped
-   (the rules leave out leaf clumps under about 0.2 m2), polygonised, simplified and moved `inset_m`
-   inwards (matched polygons were 10-12% larger than the reference, +1.2-1.5 cm on the outline).
+   components; a piece longer than `strip_m` along the row whose mean g - r is above `strip_gr` is dropped
+   (a tube filled with grass along a verge, a weedy block or a grassed row: vine leaves here are yellow-
+   green, mean g - r 1.3-9.6 DN over the reference canopies including the 56 m strips, grass 16.6-27.9).
+   Components are split across the row at necks narrower than `split_neck` of the thinner side's peak
+   width (the rules split touching plants "where it visibly narrows"), pieces under `min_area_m2` dropped
+   (the rules leave out leaf clumps under about 0.2 m2), except in a young block: where the median piece
+   of at least `young_m2` (one plot on one tile, at least `young_pieces` of them) is under `min_area_m2`,
+   the pieces are the plants ("each plant is its own polygon, however small") and are kept down to
+   `young_m2`. Polygonised, simplified and moved `inset_m` inwards (matched polygons were 10-12% larger
+   than the reference, +1.2-1.5 cm on the outline).
 Each polygon takes its plot's `vineyard_id`; nothing is predicted outside predicted plots.
 
 The reference canopies are cut at exactly 0.30 m from their row line (the farthest vertex of 90% / 77% of
@@ -29,10 +35,12 @@ them lies within 1 cm of it), which is why `tube_m` is 0.3 and why row placement
 
 Measured by `research/probes/canopy_probe.py` on the two organizer tiles (a sanity check, not a holdout;
 `green_dn`, `close_m`, `inset_m`, `row_gap` and `row_value` were chosen with these tiles in view, among 2-4
-values each; research/notes/canopy_rules.md): judge canopy score 0.855 (union IoU 0.822, instance F1 0.905),
-402 / 259 canopies against 399 / 251, 535 m2 against 536 m2, from 0.668 (0.664, 0.674) with ExG. With the
-reference rows 0.897 (diagnostic). About 0.45 s per vineyard tile on an M4 Pro, one core (0.7-0.9 s on the
-dense reference tiles)."""
+values each; `strip_gr` and `young_m2` from site views, and neither changes these tiles; research/notes/
+canopy_rules.md): judge canopy score 0.855 (union IoU 0.821, instance F1 0.905), 402 / 260 canopies against
+399 / 251, from 0.668 (0.664, 0.674) with ExG; 0.854 through `canopy_net` "and". With the reference rows
+0.897 (diagnostic). Site-wide (131 tiles, as predict.py calls it) the strip rule removes 35 canopies / 380 m2
+and the young-block rule adds 275 (238 in P09). About 0.5 s per vineyard tile on an M4 Pro, one core
+(0.7-0.9 s on the dense reference tiles), plus the network."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -71,6 +79,10 @@ class CanopyParams:
     row_gap: float = 0.7       # of two axes closer than this times the median spacing, drop the less green; 0 = off
     close_m: float = 0.05      # closing radius on the canopy in the tube; 0 = off
     inset_m: float = 0.01      # polygons moved this far inwards
+    young_m2: float = 0.05     # where the median piece of at least this size is under `min_area_m2`, the plants are
+    young_pieces: int = 10     # ...young and small (with at least this many pieces): keep pieces down to `young_m2`; 0 = off
+    strip_m: float = 8.0       # a canopy piece longer than this along the row...
+    strip_gr: float = 15.0     # ...whose mean g - r (DN) is above this is grass or weeds, not vines; 0 = off
 
 
 def excess_green(rgb: np.ndarray, params: CanopyParams) -> tuple[np.ndarray, np.ndarray]:
@@ -271,7 +283,29 @@ def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], para
     mask = green & band
     if params.close_m:
         mask = close(mask, params.close_m) & band
-    return ndimage.binary_fill_holes(mask)
+    mask = ndimage.binary_fill_holes(mask)
+    return _drop_grass_strips(mask, rgb, transform, axes, params) if params.strip_gr and axes else mask
+
+
+def _drop_grass_strips(mask: np.ndarray, rgb: np.ndarray, transform: Affine, axes: list[LineString], params: CanopyParams) -> np.ndarray:
+    """Removes 8-connected pieces longer than `strip_m` along the row whose mean g - r exceeds `strip_gr`: vine leaves
+    here are yellow-green (mean g - r of the reference canopies 1.3-9.6 DN, strips up to 56 m included), while the
+    tube filled with grass along a verge, a weedy block or a grassed row is bluish-green (16.6-27.9)."""
+    labels, count = ndimage.label(mask, EIGHT)
+    longest = max(axes, key=lambda axis: axis.length)
+    (x0, y0), (x1, y1) = longest.coords[0], longest.coords[-1]
+    direction = np.array([x1 - x0, y1 - y0]) / longest.length
+    red, green = rgb[0], rgb[1]
+    drop = np.zeros(count + 1, bool)
+    for index, window in enumerate(ndimage.find_objects(labels), start=1):
+        if window is None or np.hypot(window[0].stop - window[0].start, window[1].stop - window[1].start) * PIXEL_M <= params.strip_m:
+            continue
+        rows, cols = np.nonzero(labels[window] == index)
+        along = ((cols + window[1].start) * direction[0] - (rows + window[0].start) * direction[1]) * PIXEL_M
+        if np.ptp(along) > params.strip_m:
+            rr, cc = rows + window[0].start, cols + window[1].start
+            drop[index] = float(np.mean(green[rr, cc].astype(np.float32) - red[rr, cc])) > params.strip_gr
+    return mask & ~drop[labels]
 
 
 def otsu(values: np.ndarray, bins: int = 256) -> float:
@@ -286,11 +320,24 @@ def otsu(values: np.ndarray, bins: int = 256) -> float:
     return float(centres[np.nanargmax(between[:-1])])
 
 
+def min_area(labels: np.ndarray, params: CanopyParams) -> float:
+    """`min_area_m2`, or `young_m2` in a young block: when the median of the pieces of at least `young_m2` (of one plot
+    on one tile) is under `min_area_m2`, the pieces are the plants themselves ("each plant is its own polygon, however
+    small"), not leaf clumps beside bigger plants."""
+    if not params.young_pieces:
+        return params.min_area_m2
+    sizes = np.bincount(labels.ravel())[1:] * PIXEL_M**2
+    sizes = sizes[sizes >= params.young_m2]
+    young = len(sizes) >= params.young_pieces and float(np.median(sizes)) < params.min_area_m2
+    return params.young_m2 if young else params.min_area_m2
+
+
 def canopy_polygons(mask: np.ndarray, transform: Affine, angle_deg: float, params: CanopyParams) -> list[Polygon]:
     labels, count = ndimage.label(mask, EIGHT)
     if params.split_neck and count:
         labels, count = _split(labels, count, _along(transform, mask.shape, angle_deg), params)
-    labels[np.bincount(labels.ravel())[labels] * PIXEL_M**2 < params.min_area_m2] = 0
+    minimum = min_area(labels, params)
+    labels[np.bincount(labels.ravel())[labels] * PIXEL_M**2 < minimum] = 0
     parts: dict[int, list[BaseGeometry]] = {}
     for geometry, value in shapes(labels.astype(np.int32), mask=labels > 0, connectivity=8, transform=transform):
         parts.setdefault(int(value), []).append(shape(geometry))
@@ -298,7 +345,7 @@ def canopy_polygons(mask: np.ndarray, transform: Affine, angle_deg: float, param
     polygons = []
     for pieces in parts.values():
         best = largest(make_valid(max(pieces, key=lambda p: p.area).simplify(params.simplify_m)))
-        if best is not None and best.area >= params.min_area_m2:
+        if best is not None and best.area >= minimum:
             best = largest(make_valid(Polygon(best.exterior).buffer(-params.inset_m, join_style="mitre"))) if params.inset_m else best
             if best is not None:
                 polygons.append(Polygon(best.exterior))

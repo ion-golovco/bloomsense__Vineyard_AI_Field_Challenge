@@ -1,114 +1,112 @@
 # Waste (10 points): scan, detector, recommendation
 
-26 September 2026. Everything below was measured on the 311 tiles. The verdicts ("likely", "unsure", "not") are my own,
-from contact sheets and 5x zooms. No labelled Sireț3 waste exists, so no number here is an accuracy.
+26 September 2026. Everything below was measured on the 311 tiles. The verdicts ("likely", "possible", "unsure", "not")
+are my own, from contact sheets and 5x zooms. No labelled Sireț3 waste exists, so no number here is an accuracy.
+
+## Current detector: waste inside vineyard blocks only (10:00)
+
+The user saw 2–3 pieces of garbage in the four big vineyards by START, and decided that only waste inside vineyards
+counts. The rules also allow the surrounding zone. The four vineyards are the predicted blocks P03, P02, P16 and P07
+(`overview_start.jpg`, 600 m around START).
+
+**Method (`backend/src/marcaj/waste.py`).** Only pixels inside a predicted block and ≥ 0.35 m from every predicted
+row axis are used. The row axis is the planting: canopies, white vine tubes, stakes and posts.
+
+1. **Candidates.** Blobs whose RGB distance from the 2 m median background is ≥ 90, that are not green and not shadow.
+2. **`accept` keeps a blob when all of these hold:**
+   - 0.15–1.5 m²
+   - mean distance ≥ 170
+   - luminance ≥ 215 and chroma ≤ 20 (white plastic)
+   - narrow-axis spread ≥ 0.08 m (a lying stake is a few cm)
+   - no pale structure (sheds, trucks, concrete, tracks)
+3. **Box.** The box is the largest bright piece of the blob, so a lying tube merged into the blob does not stretch it.
+4. **`vineyard_id`** is the block the blob lies in.
+
+**Measured.**
+- 20,063 candidates inside the 36 blocks, in 56 s, 0.65 GB peak, one core.
+- `detect(tiles, predictions, data_dir)` is unchanged, and `predict.py` calls it before `rows.per_tile`.
+
+**Boxes kept: 2, both likely litter.**
+
+| Tile | EPSG:32635 centre | Block | Box | Verdict |
+|---|---|---|---|---|
+| r018_c013 | E 629673.4, N 5220250.2 | P03 | 0.98 × 1.05 m | likely: white plastic item (bag or basin) with a grey film, on the headland by the road |
+| r022_c013 | E 629673.9, N 5220087.5 | P07 | 0.43 × 0.70 m | likely: white bag at a vine row; blob-shaped, among lying white tubes |
+
+Both boxes are about 1 m from the predicted passable space (inter-rows plus passages), so a route along the
+neighbouring inter-row visits them within the 2 m radius.
+
+**Near misses.** A looser setting (0.10 m², distance 160, luminance 205, chroma 25) lets 13 more through. I checked all
+13 by eye:
+
+- **Possible third item:** white paper or plastic pieces in grass by a parked car, at the P02 corner (r021_c015, E 629771.4, N 5220128.3, blob 0.24 m²). It has luminance 208 and chroma 21, so it fails the strict thresholds. It is left for a reviewer to draw in Marcaj if they agree.
+- **Unsure:** a yellow-and-white object in a shrub at a P12 row (r014_c004, E 629210.8, N 5220483.3): a container, or equipment.
+- **Not litter:**
+  - a white post with a long shadow, in P04 (r010_c002)
+  - 10 silvery shrubs or blossom, in P13, P15, P20, P21 and P31
+
+**Also seen, not boxed.** Several small white pieces of 0.03–0.09 m² on the grassy NE headland of P03/P02 by the road,
+near a parked truck (r019_c013, r020_c014). They are paper or plastic bits, or stones: unsure, and below the size gate.
+
+**Control.** The two organizer example tiles have no waste. The detector puts 0 boxes on them, out of 520 candidates there.
+
+**In-sample.** The thresholds were set with these crops in view, so this is in-sample. The two kept items are the ones
+found by eye in the central blocks, so the tuning does rest on them.
+
+**Crops** (in `data/generated/work/waste/`):
+- `detector_inblock_01.jpg`: the 2 boxes with their verdicts
+- `nearmiss_inblock_01.jpg`: the 13 near misses with their verdicts
+- `zoom_p03_bag_stitched.jpg`, `zoom_p07_bag.jpg`, `zoom_p02_car.jpg`: native zooms
+- `central_*.jpg`, `central_anom_*.jpg`, `central_strong_*.jpg`: the central-block scans
+- `inblock_*.jpg`: the ranked in-block candidates
+
+Review with `research/probes/waste_inblock_review.py`.
 
 ## How waste is scored
 
-- The organizers score F1 = 2·TP / (P + R), with one-to-one matching at IoU ≥ 0.3, over a hidden subset of tiles.
-  - If any reference waste lies on those tiles, predicting nothing scores 0.
-  - If there is none, any box on those tiles scores 0, and 0/0 is undefined. The organizers may score it as 1 or skip it; we don't know which.
-- `judge._f1` returns `None` for 0/0, so waste drops out of `points_available`. N boxes against 0 reference boxes give 0.0.
-  - The two example tiles hold 0 waste. So the local judge can only report "n/a" (no boxes) or 0/10 (any box).
-  - That behaviour is correct for the formula, not a bug. The local judge cannot measure waste either way.
-- `cvat.image_elements` clips a box that crosses a tile edge into one box per tile. `check_cvat` allows an empty `vineyard_id` on waste.
-- Waste is also a route target: it counts when the route passes within 2 m. `routing.route_targets` uses the centroids of scored boxes, which come from the Marcaj export.
+- The organizers score F1 = 2·TP / (P + R), matched one-to-one at IoU ≥ 0.3, over a hidden subset of tiles.
+  - With any reference waste on those tiles, predicting nothing scores 0.
+  - With none, any box on them scores 0, and 0/0 is undefined (scored as 1 or skipped; unknown).
+- **Local judge.** `judge._f1` returns `None` for 0/0, so waste drops out of `points_available`.
+  - The two example tiles hold no waste, so the local judge can only show "n/a" or 0/10.
+  - That is correct for the formula, not a bug, but it means the judge cannot measure waste.
+- `cvat.image_elements` clips a box that crosses a tile edge into one box per tile.
 - The rules say: "When in doubt whether something is litter, leave it out."
-- **Organizer calibration.** Tile r006_c004 has a pale 0.7 m² object at the headland, which was my top raw candidate (score 0.92). The organizers did not box it, and they did not box the white vine tubes either. Their reference is conservative.
+- On r006_c004 the organizers left a pale headland object and the white vine tubes unboxed: their reference is conservative.
 
-## What the scan found
+## Site-wide scan (v1, superseded by the in-block rule)
 
-`python -m marcaj.waste` scans every tile at 0.025 m: 25,153 candidates in 84 s, peak RSS 0.59 GB, one core. The candidates are white, blue, vivid or dark blobs.
+**Scan.** White, blue, vivid and dark blobs over all 311 tiles: 25,153 candidates in 84 s.
 
-| Kind | Count | What they are |
-|---|---|---|
-| white | 23,388 | Mostly flowering shrubs, pale soil, limestone and white stones, vine tubes, walls, kerbs, roofs, concrete well lids, and glints on black mulch film |
-| blue | 1,107 | Pools, cars, blue roofs, greenhouses, solar panels, and the black plastic mulch of block P15 (r027–r029 c031–c033). A few pieces of blue plastic |
-| vivid | 502 | Red and orange roofs, machinery, flowers. No litter seen |
-| dark | 156 | Shadows. No tyres seen |
+I viewed 256 crops. They split into:
+- **12 likely litter:** white bags and sheets, heaps of white film, printed packaging, a bottle and cup, and blue plastic. They lie in grassland, field edges and yard margins near the village edge.
+- **About 120 unsure:** small white objects.
+- **About 75 not litter:** shrubs, stones, tubes, walls, roofs, well lids, glints on the black mulch film.
 
-I viewed 256 crops: the top 160 field candidates (≥ 15 m from buildings), the top 40 near buildings, and 56 in a recall probe. They split into:
+The v1 verifier kept 29 boxes, all outside the blocks except one: 10 likely, 12 unsure, 7 not.
 
-- **12 likely litter.** White bags and sheets in grass, two heaps of white film, packaging with print, a bottle and cup, and three pieces of blue plastic.
-- **About 120 unsure.** Compact white objects of 0.02–0.15 m². At 2.5 cm/px, and blurred, a bag, paper or a white stone cannot be told apart.
-- **About 75 not litter.**
+**Superseded.** These are outside vineyards, so by the user's decision they no longer count. They are also not route
+targets.
 
-The 12 likely items lie in grassland, field edges and yard margins near the village edge:
+**Files kept for the record:**
+- `candidates_sitewide_v1.json`, `waste_sitewide_v1.geojson`
+- `r2_*.jpg`, `detector_0*.jpg`, `likely_01.jpg`, `likely_checklist.json`, `labels.json`
+- probes `waste_rank.py`, `waste_labels.py`, `waste_review.py`
 
-- r012_c005 (3 items next to greenhouses)
-- r015_c008, r015_c011, r017_c011
-- r021_c016 (yard fence), r025_c019, r029_c018, r030_c016
-- r032_c027 and r033_c027 (south-east grassland)
-
-Only one lies in a predicted block (P24). **None are inside vine rows.**
-
-Unsure heaps of white rubble or debris, which the verifier deliberately does not accept:
-
-- r020_c010 on a track (E 629506.9, N 5220178.2)
-- r023_c017 (plastic sheet beside rubble)
-- r024_c018 (debris pile in a yard)
-- r028_c028, r034_c025, r007_c001
-
-All files are in `data/generated/work/waste/`:
-
-- `r2_field_01..06.jpg` and `r2_town_01..02.jpg`: the ranked sheets
-- `labels.json`: my verdicts
-- `detector_01..02.jpg`: the 29 detector boxes, each captioned with its verdict
-- `likely_01.jpg` and `likely_checklist.json`: the 12 likely items, with EPSG:32635 centres
-- `recall_probe_01..02.jpg`: rejected candidates
-- `zoom_*.jpg`
-- `waste.geojson` and `candidates.json`
-
-## Detector (`backend/src/marcaj/waste.py`)
-
-The generator described above feeds a hand-set verifier. `accept` keeps:
-
-- **White blobs of 0.1–1.5 m²** that are:
-  - bright and partly clipped
-  - textured (not a smooth disc)
-  - lying in vegetation (ring green share ≥ 0.4)
-  - isolated
-  - clear of pale structures, ≥ 10 m from buildings and ≥ 0.5 m from row axes
-- **Blue blobs of 0.04–1.5 m²** with the same context and a crumpled or printed texture (luminance std ≥ 20).
-
-Touching boxes are merged. `vineyard_id` is the containing block, or the nearest one within 10 m, otherwise empty.
-
-| Measure | Result |
-|---|---|
-| Boxes kept | 29 |
-| Likely | 10 (34%) |
-| Unsure | 12 (41%) |
-| Not litter | 7 (24%): a well ring, stones ×2, limestone, a wall end, a concrete base, a flowering shrub |
-| Likely items left out | 2 of the 12 seen: a 0.04 m² bottle and cup (too small), and a 1.59 m² film heap (too large or dense) |
-| Rejected in the recall probe | Flowering shrubs, stones, roofs, mulch; ~6 plausible debris heaps; no other likely item |
-| Control | 0 boxes on the two example tiles. The headland object on r006_c004 is rejected (0.5 m from a forbidden zone) |
-
-The thresholds were set with these crops in view, so all numbers are in-sample.
-
-- **Boxes are tight around the white pixels only.** On printed packaging (r025_c019) and the bottle-and-lid item they cover part of the object, so IoU against a hand-drawn box can fall below 0.3. Reviewers should resize them.
-- **The cached RT-DETRv2-r18 (COCO) is useless here.** Run on CPU with `research/probes/waste_rtdetr.py`, it returned "cat", "elephant" or "donut" (0.5–0.8) on all 29 crops, litter and non-litter alike. Its licence is Apache-2.0 per the Hugging Face card; the card is not cached, so this was not re-checked offline.
-- **SAM 2.1 tiny was not tried.**
-
-**How to wire it in (not done).** In `predict.predict`, after `found` is built and before `rows.per_tile`:
-
-```python
-boxes, _ = waste.detect(tiles, found, data_dir)
-found += boxes
-```
-
-This adds about 85 s. `per_tile` passes other labels through, and `marcaj-pack` writes the boxes as CVAT rectangles.
+The cached RT-DETRv2-r18 (COCO, Apache-2.0 per its Hugging Face card) fired "cat" or "donut" on every crop, litter or
+not (`waste_rtdetr.py`).
 
 ## Recommendation
 
-1. **Don't import the 29 boxes unreviewed.** About a quarter are clearly not litter, and each false box costs as much as a miss.
-2. Pre-annotate the 29 boxes. In Marcaj, delete every box that is not clearly litter, and resize the rest. That takes minutes.
-3. The same reviewers check the 2 missed likely items and the 6 heaps from `likely_checklist.json` and this note, and draw them in Marcaj if they agree.
-4. Keep the kept boxes as route targets. Most lie outside blocks, so check each is within 2 m of passable space, or list it as unreachable.
-5. **Predicting nothing** wins only if the hidden tiles hold no waste. I found about 12 likely items in the tile set, so I would not bet on that. The conservative reference (tubes and the headland object unboxed) argues for boxing only clear items, not for boxing none.
+1. Import the 2 boxes. In Marcaj, the reviewer of r018_c013 and r022_c013 confirms each and resizes it to the whole object.
+   - The P03 box covers the white part; the grey film around it is part of the same object.
+2. Check the P02 car-side pieces (r021_c015). Draw one box, or one box per piece, only if they are clearly litter.
+3. Leave everything else empty.
+4. Waste boxes are route targets. Both kept boxes are reachable (about 1 m from passable space).
 
 ## Downloads that would help (not downloaded)
 
 | Download | Enables | Time |
 |---|---|---|
-| DroneWaste, Zenodo 17045559: 3.88 GB, CC BY 4.0, ~2 cm/px, 4,993 images, 5,135 annotations, 20 materials | A learned verifier (fine-tune the cached RT-DETRv2-r18, or a small torchvision detector) on crops around our candidates, plus a held-out precision and recall on DroneWaste | ~0.5–1 h download, 0.5 h conversion, 1–2 h training on MPS, 10 min on our candidates. Scale matches; season and scene differ |
-| UAVVaste (COCO-like aerial litter, ~770 images) | A second domain for the same verifier | Size and licence need checking before use |
+| DroneWaste, Zenodo 17045559: 3.88 GB, CC BY 4.0, ~2 cm/px, 4,993 images, 5,135 annotations, 20 materials | A learned verifier on crops around our candidates, plus a held-out precision and recall on DroneWaste | ~0.5–1 h download, 0.5 h conversion, 1–2 h training on MPS, 10 min on our candidates |
+| UAVVaste (COCO-like aerial litter, ~770 images) | A second domain for the same verifier | Size and licence need checking first |

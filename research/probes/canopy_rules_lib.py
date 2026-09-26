@@ -3,6 +3,7 @@ rows, and a fast canopy scorer with the judge's own formulas (`marcaj.judge._mat
 The scorer skips the judge's CVAT round trip (clip + 0.01 px snap), which moves the score by < 0.001."""
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,8 @@ from marcaj.tiles import DATA_DIR, REPO_ROOT, load_tiles
 
 NAMES = ["siret3_r021_c012.tif", "siret3_r006_c004.tif"]
 WORK = REPO_ROOT / "data" / "generated" / "work" / "canopy_rules"
-PLOTS = WORK / "plots.json"  # one frozen `detect_plots()` output, so trials don't move with the plots agent's edits
+# one frozen `detect_plots()` output, so trials don't move with the plots agent's edits; CANOPY_PLOTS picks another
+PLOTS = Path(os.environ.get("CANOPY_PLOTS", WORK / "plots.json"))
 
 tiles = {tile.name: tile for tile in load_tiles()}
 base = build_scene([DATA_DIR / "05_examples" / "siret3_examples_cvat.zip"], [], tiles=list(tiles.values()))["features"]
