@@ -1,8 +1,15 @@
-"""Vineyard plots and their row axes, with no training (docs/RESEARCH.md, "Plot variables").
-Plots are seeded where vine-spacing row energy beats orchard-spacing energy, split where the row direction
-changes, and fitted in each plot's own row frame: the sides on the outermost row axes, the ends square to
-the rows unless clearly oblique, and edges that face a road moved onto it. Row axes are the across-row ExG
-profile peaks, which matched the reference rows to a median 0.04-0.06 m on both reference tiles."""
+"""Vineyard plots and their row axes, with no training (docs/RESEARCH.md, "Plot variables"; research/notes/plots.md).
+Plots are seeded where vine-spacing row energy beats orchard-spacing energy, split where the row direction changes,
+dropped when the across-row ExG wave is too weak to be green vines (tractor lines on bare fields), and fitted in each
+plot's own row frame: the sides on the outermost row axes, the ends square to the rows unless clearly oblique. The seed's
+fit is then walked outward row by row and along each row while the row stands out from its inter-rows, so a bare-soil
+core takes in its grassy continuation; fits of one planting that a tree split are joined, and edges that face a road
+are moved onto it. Row axes are the across-row ExG profile peaks, which matched the reference rows to a median
+0.04-0.06 m on both reference tiles.
+
+Against the 35 hand-drawn vineyard outlines (`judge.plot_scores`, north tunes, south validates): north F1 0.81 at
+IoU 0.5, 0.54 at 0.75, median best IoU 0.76, area IoU 0.81; south 0.65 / 0.35 / 0.70 / 0.66. The frozen detector
+before the walk scored 0.59 / 0.44 / 0.65 / 0.79 and 0.47 / 0.12 / 0.52 / 0.55. About 23 s."""
 
 import json
 import time
@@ -38,6 +45,13 @@ class PlotParams:
     road_setback_m: float = 1.0   # ...stopping this far short of the road boundary
     min_area_m2: float = 150.0
     min_row_m: float = 2.0
+    peak_reach: float = 0.6       # a row axis is the highest across-row ExG peak within this many spacings (0.35 kept grass strips 1.1-1.35 m from a row)
+    min_wave_exg: float = 0.005   # seeds with a weaker across-row ExG wave are dropped: tractor lines on bare fields 0.0005-0.0015, vineyards 0.011+
+    walk: float = 0.5             # a row continues where its tube-minus-flank ExG is at least this share of the plot's median; 0 = off
+    walk_reach_m: float = 40.0    # how far beyond its seed a plot may be walked
+    gap_m: float = 3.0            # a row may lapse this long (missing vines); a track, headland or tree clump stops it
+    new_row_share: float = 0.6    # a new outer row needs evidence along this share of its neighbour
+    merge_m: float = 5.0          # fits of one planting under this far apart join (the 5 m block rule); 0 = off
 
 
 class _Excess:
@@ -134,7 +148,7 @@ def _quadrilateral(excess: _Excess, region: Polygon, angle: float, spacing: floa
     if len(covered) < 2:
         return None
     lo, hi = frame.v[covered[0]], frame.v[covered[-1]]
-    reach = max(1, int(0.35 * spacing / MOSAIC_PX_M))
+    reach = max(1, int(params.peak_reach * spacing / MOSAIC_PX_M))
     floor = np.percentile(profile[covered[0]:covered[-1] + 1], 60)
     axes = frame.v[[i for i in range(reach, len(profile) - reach)
                     if profile[i] == profile[i - reach:i + reach + 1].max() and profile[i] > floor]]
@@ -162,6 +176,114 @@ def _quadrilateral(excess: _Excess, region: Polygon, angle: float, spacing: floa
     if not quad.is_valid or not quad.area:
         return None
     return quad, [LineString(list(zip(*frame.world([frame.u[0], frame.u[-1]], [v, v])))) for v in axes]
+
+
+def _wave(excess: _Excess, polygon: Polygon, angle: float, spacing: float) -> float:
+    """Amplitude of the across-row ExG wave at the plot's spacing: green vine rows, not tractor lines on bare soil."""
+    frame = _Frame(polygon, angle, MOSAIC_PX_M)
+    counts = frame.inside.sum(1)
+    use = counts > 10
+    if use.sum() < 8:
+        return 0.0
+    profile = ((excess.at(frame.x, frame.y) * frame.inside).sum(1) / np.maximum(counts, 1))[use]
+    return float(2 * np.abs((profile * np.exp(-2j * np.pi * frame.v[use] / spacing)).mean()))
+
+
+def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable_at, params: PlotParams) -> tuple[Polygon, list[LineString]] | None:
+    """The seed's quadrilateral walked outward: a new outer row where the lattice predicts one and it has evidence along
+    most of its neighbour, then each row's ends along the row while the evidence lasts. Evidence is the ExG of a
+    +-0.3 m tube on the row minus the tubes half a spacing to either side, smoothed 1 m along the row, against
+    `walk` times the plot's own median, so grassy continuations of a bare-soil core still count. Roads and no-data stop it."""
+    result = _quadrilateral(excess, region, angle, spacing, params)
+    if result is None or not params.walk:
+        return result
+    quad, axes = result
+    frame = _Frame(region, angle, MOSAIC_PX_M, pad=params.walk_reach_m)
+    usable = usable_at(frame.x, frame.y)
+    tube = 2 * round(0.3 / MOSAIC_PX_M) + 1
+    mean = ndimage.uniform_filter1d(np.where(usable, excess.at(frame.x, frame.y), 0), tube, axis=0) / np.maximum(
+        ndimage.uniform_filter1d(usable.astype(np.float32), tube, axis=0), 1e-3)
+    half = round(spacing / 2 / MOSAIC_PX_M)
+    evidence = np.zeros(mean.shape, np.float32)
+    evidence[half:-half] = mean[half:-half] - 0.5 * (mean[:-2 * half] + mean[2 * half:])
+    ok = usable.copy()
+    ok[:half] = ok[-half:] = False
+    ok[half:-half] &= usable[:-2 * half] & usable[2 * half:]
+    sigma = 1.0 / MOSAIC_PX_M
+    weight = ndimage.gaussian_filter1d(ok.astype(np.float32), sigma, axis=1)
+    evidence = ndimage.gaussian_filter1d(np.where(ok, evidence, 0), sigma, axis=1) / np.maximum(weight, 1e-3)
+    ok &= weight > 0.5
+    normal = np.array([-np.sin(frame.angle), np.cos(frame.angle)])
+    inside = contains_xy(quad, frame.x, frame.y)
+    rows: dict[int, list[int]] = {}
+    for axis in axes:
+        iv = int(round(((np.asarray(axis.coords[0]) - frame.origin) @ normal - frame.v[0]) / MOSAIC_PX_M))
+        cols = np.flatnonzero(inside[iv]) if 0 <= iv < len(frame.v) else []
+        if len(cols):
+            rows[iv] = [cols[0], cols[-1]]
+    levels = [np.median(evidence[iv, a:b + 1][ok[iv, a:b + 1]]) for iv, (a, b) in rows.items() if ok[iv, a:b + 1].any()]
+    if len(rows) < 2 or not np.median(levels) > 0:
+        return result
+    threshold = params.walk * np.median(levels)
+    reach, step = max(1, round(0.25 * spacing / MOSAIC_PX_M)), spacing / MOSAIC_PX_M
+    for side in (-1, 1):
+        edge = min(rows) if side < 0 else max(rows)
+        while True:
+            a, b = rows[edge]
+            centre = int(round(edge + side * step))
+            candidates = [iv for iv in range(centre - reach, centre + reach + 1) if half <= iv < len(frame.v) - half]
+            if not candidates:
+                break
+            best = max(candidates, key=lambda iv: np.median(np.where(ok[iv, a:b + 1], evidence[iv, a:b + 1], -np.inf)))
+            if (ok[best, a:b + 1] & (evidence[best, a:b + 1] > threshold)).mean() < params.new_row_share:
+                break
+            rows[best] = [a, b]
+            edge = best
+    gap = params.gap_m / MOSAIC_PX_M
+    for iv, extent in rows.items():
+        good, passable = ok[iv] & (evidence[iv] > threshold), ok[iv] | usable[iv]
+        for end, direction in ((1, 1), (0, -1)):
+            last = j = extent[end]
+            while 0 <= j + direction < len(frame.u) and abs(j + direction - last) <= gap and passable[j + direction]:
+                j += direction
+                if good[j]:
+                    last = j
+            extent[end] = last
+    order = sorted(rows)
+    v = frame.v[order]
+    (s1, i1), (s2, i2) = (_end_line(frame.u[[rows[iv][end] for iv in order]], v, params.square_deg) for end in (0, 1))
+    lo, hi = v.min(), v.max()
+    corners = [(i1 + s1 * lo, lo), (i2 + s2 * lo, lo), (i2 + s2 * hi, hi), (i1 + s1 * hi, hi)]
+    walked = Polygon(list(zip(*frame.world(*zip(*corners)))))
+    if not walked.is_valid or walked.area < quad.area:
+        return result
+    return walked, [LineString(list(zip(*frame.world([frame.u[0], frame.u[-1]], [c, c])))) for c in v]
+
+
+def _merge(fitted: list, excess: _Excess, roads, params: PlotParams) -> list:
+    """Joins two fits of one planting that a tree or a weak stretch split: same angle and spacing, rows on one lattice
+    (a half-spacing shift is another planting), under `merge_m` apart with no road between, and filling at least 80%
+    of their joint quadrilateral (so an L-shaped pair stays two plots)."""
+    fitted = list(fitted)
+    for i in range(len(fitted)):
+        j = i + 1
+        while i < len(fitted) and j < len(fitted):
+            (pa, aa, sa, xa), (pb, ab, sb, xb) = fitted[i], fitted[j]
+            result = None
+            if abs((aa - ab + 90) % 180 - 90) <= 1.5 and abs(sa - sb) <= 0.05 * sa and pa.distance(pb) <= params.merge_m:
+                normal = np.array([-np.sin(np.radians(aa)), np.cos(np.radians(aa))])
+                offset = (np.median([np.asarray(x.coords[0]) @ normal for x in xb]) - np.asarray(xa[0].coords[0]) @ normal) % sa
+                union = unary_union([pa, pb])
+                bridge = union.convex_hull.difference(union)
+                if min(offset, sa - offset) <= 0.2 * sa and not bridge.intersection(roads).area > 0.1 * bridge.area:
+                    result = _quadrilateral(excess, union.convex_hull, aa, sa, params)
+            if result is None or pa.area + pb.area < 0.8 * result[0].area:
+                j += 1
+                continue
+            fitted[i] = (_largest(_onto_roads(result[0], roads, params)), aa, sa, result[1])
+            del fitted[j]
+            j = i + 1
+    return fitted
 
 
 def _onto_roads(quad: Polygon, roads, params: PlotParams) -> Polygon:
@@ -243,16 +365,19 @@ def detect_plots(params: PlotParams = PlotParams(), data_dir: Path = DATA_DIR, l
     excess = excess or load_excess(data_dir)
     roads = exclusions(data_dir)
     blocked = rasterize([roads], out_shape=layers.valid.shape, transform=layers.transform).astype(bool)
+    usable, t = (layers.valid & ~blocked).astype(np.uint8), layers.transform
+    usable_at = lambda x, y: ndimage.map_coordinates(usable, [(t.f - y) / LAYER_PX_M - 0.5, (x - t.c) / LAYER_PX_M - 0.5], order=0, cval=0).astype(bool)
     fitted = []
     for region in _regions(layers, blocked, params):
         angle, spacing = _row_angle(excess, region)
-        if not spacing:
+        if not spacing or _wave(excess, region, angle, spacing) < params.min_wave_exg:
             continue
-        result = _quadrilateral(excess, region, angle, spacing, params)
+        result = _walk(excess, region, angle, spacing, usable_at, params)
         if result is None:
             continue
         quad, axes = result
         fitted.append((_largest(_onto_roads(quad, roads, params)), angle, spacing, axes))
+    fitted = _merge(fitted, excess, roads, params) if params.merge_m else fitted
     # a bigger plot keeps an overlap, and a fit mostly inside an accepted plot is the same plot found twice
     plots, taken = [], Polygon()
     for polygon, angle, spacing, axes in sorted(fitted, key=lambda item: -item[0].area):

@@ -1,6 +1,7 @@
 """Canopy detector (`marcaj.canopy`) on the two organizer reference tiles, scored with the organizer formulas
 (`marcaj.judge`: 0.6 x union IoU + 0.4 x one-to-one F1 at IoU 0.5), plus pixel IoU, row-axis error and a preview.
-Evaluation only. Variant U tubes the reference rows: a diagnostic that separates row error from canopy error.
+Evaluation only. Variant U tubes the reference rows: a diagnostic that separates row error from canopy error; O is
+the previous method (normalised ExG, contrast test). research/probes/canopy_rules_*.py hold the error analysis and trials.
 Run from backend/: uv run --frozen python ../research/probes/canopy_probe.py [plots.json]
 (an optional cached `detect_plots()` output skips its ~20 s)."""
 
@@ -73,7 +74,7 @@ def run(tag: str, params: CanopyParams, rows_for=lambda name: predicted_rows) ->
         predictions.append(found)
     report = judge({"type": "FeatureCollection", "crs": "EPSG:32635", "features": base + [f for found in predictions for f in found]})
     by_tile = {t["tile"]: t for t in report["tiles"]}
-    print(f"{tag:34s} canopy {report['scores']['canopy']:.3f} (IoU {report['canopy_iou']:.3f}, F1 {report['canopy_f1']:.3f})", end="")
+    print(f"{tag:44s} canopy {report['scores']['canopy']:.3f} (IoU {report['canopy_iou']:.3f}, F1 {report['canopy_f1']:.3f})", end="")
     for name, found, spent in zip(NAMES, predictions, seconds):
         t = by_tile[name]
         pred, ref = t["counts"]["vineyard"]
@@ -115,22 +116,23 @@ for name in NAMES:
         print(f"  reference canopy inside the +-0.3 m tube of the {tag} rows: {(truth & inside).sum() / truth.sum():.1%}")
 
 default = CanopyParams()
-print(f"\ndefaults {default}; A is the defaults without the neck split\nvariant | both tiles | per tile: score, union IoU, instance F1, predicted/reference, pixel IoU, seconds")
-plain = replace(default, split_neck=0.0)
-raw = replace(plain, refine_m=0, row_contrast=0)
-results = {"A": run("A predicted rows, no split", plain)}
-run("A0 predicted rows as given", raw)
-run("A1 A without the contrast filter", replace(plain, row_contrast=0))
-run("U reference rows (diagnostic)", raw, reference_rows)
-results["S"] = run("S A + split neck 0.3 (defaults)", default)
-run("S5 A + split neck 0.5", replace(default, split_neck=0.5))
-run("U + split neck 0.3 (diagnostic)", replace(raw, split_neck=0.3), reference_rows)
-run("A + Otsu threshold in the tube", replace(plain, otsu=True))
-print("\none-at-a-time sensitivity on A (every value tried is listed)")
-for field, values in (("exg_min", (0.08, 0.14)), ("tube_m", (0.2, 0.4)), ("smooth_m", (0.0, 0.1)),
-                      ("min_area_m2", (0.1, 0.3)), ("refine_m", (0.3, 0.7)), ("row_contrast", (2.0,))):
+print(f"\ndefaults {default}\nvariant | both tiles | per tile: score, union IoU, instance F1, predicted/reference, pixel IoU, seconds")
+old = replace(default, green_dn=0, refine2_m=0, row_contrast=1.3, row_gap=0, row_value=0, close_m=0, inset_m=0)
+results = {"S": run("S defaults", default)}
+run("O previous defaults (ExG > 0.11, contrast 1.3)", old)
+run("U reference rows (diagnostic)", replace(default, refine_m=0, row_gap=0), reference_rows)
+print("\neach rule off, one at a time")
+for tag, change in (("normalised ExG > 0.11 instead of DN", dict(green_dn=0)), ("no inter-row drop", dict(row_gap=0)),
+                    ("no inter-row drop, contrast 1.3", dict(row_gap=0, row_contrast=1.3)), ("inter-row drop + contrast 1.3", dict(row_contrast=1.3)), ("no value-contrast test", dict(row_value=0)),
+                    ("no second refit", dict(refine2_m=0)), ("no refit (rows as given)", dict(refine_m=0)), ("no closing", dict(close_m=0)),
+                    ("no inset", dict(inset_m=0)), ("no neck split", dict(split_neck=0)), ("Otsu threshold in the tube", dict(otsu=True))):
+    run(f"S {tag}", replace(default, **change))
+print("\none-at-a-time sensitivity on S (every value tried is listed)")
+for field, values in (("green_dn", (22.0, 27.0, 30.0)), ("smooth_m", (0.025, 0.075)), ("close_m", (0.025, 0.075)), ("row_gap", (0.5, 0.85)),
+                      ("inset_m", (0.005, 0.02)), ("tube_m", (0.25, 0.35)), ("min_area_m2", (0.15, 0.25)), ("split_neck", (0.2, 0.4)),
+                      ("refine2_m", (0.2,)), ("row_value", (1.3, 1.5))):
     for value in values:
-        run(f"A {field}={value}", replace(plain, **{field: value}))
+        run(f"S {field}={value}", replace(default, **{field: value}))
 
 per_tile = np.mean(results["S"]["seconds"])
 print(f"\nS runtime {per_tile:.2f} s per vineyard tile (read + detect + polygonise) -> about {per_tile * 311 / 60:.1f} min for all 311 tiles on one core, "

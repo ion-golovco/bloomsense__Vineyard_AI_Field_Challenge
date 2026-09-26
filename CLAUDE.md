@@ -39,10 +39,12 @@ Two separate front ends, one Python package.
 | `package` | Upload ZIPs regrouped under 88,000,000 bytes and re-verified. It packs `source=prediction` features only by default; `--source reference --only …` gives the example dry run. `marcaj-pack` |
 | `mosaic` | Preprocessing: one seamless 0.2 m/px GeoTIFF of the 311 verified tiles, area-averaged, cached at `data/generated/mosaic_20cm.tif` (11 s) |
 | `layers` | Plot variables on a 0.4 m grid: vine-over-orchard row energy, orchard energy, row angle, green share. Cached at `data/generated/layers_40cm.npz` (17 s) |
-| `plots` | Training-free plots and row axes: seeds from `layers`, split by row direction, per-plot row lattice (angle, spacing, axes), quadrilateral fit, road rule; global `vineyard_id` and `row_id` (18 s) |
-| `rows` | Inter-row polygons between neighbouring axes (inset 0.35 m), and per-tile `row_structure` / `interrow_cover` from native pixels (16 s, all tiles) |
-| `canopy` | Canopy polygons at native 0.025 m: ExG > 0.11 inside a ±0.3 m tube of each re-fitted row axis, split at necks, ≥ 0.2 m² (67 s, all tiles) |
-| `predict` | The whole prediction to `data/generated/predictions.geojson`: `uv run --frozen python -m marcaj.predict` (96 s) |
+| `plots` | Training-free plots and row axes: seeds from `layers` (a wave floor drops tilled fields), split by row direction, per-plot row lattice (angle, spacing, axes), quadrilateral fit, row walk outward, 5 m merge, road rule; global `vineyard_id` and `row_id` (24 s) |
+| `rows` | Inter-row polygons between neighbouring axes (axis ± 0.30 m, as the reference draws them; ends carried onto passages), stray-row drop, and per-tile `row_structure` / `interrow_cover` from native pixels (20 s, all tiles) |
+| `canopy` | Canopy polygons at native 0.025 m: plain 2g − r − b > 25 inside a ±0.3 m tube of each twice re-fitted row axis, 0.05 m closing, split at necks, shrunk 0.01 m, ≥ 0.2 m² (73 s, all tiles) |
+| `waste` | Waste boxes: colour-blob candidates (white, blue) and a hand-set precision verifier; 29 boxes to review in Marcaj (85 s) |
+| `canopy_net` | The brief's neural network: a 2.0 M-parameter U-Net in plain torch, randomly initialised and self-trained on `canopy` output from 118 tiles (reference tiles and neighbours held out). Weights `models/canopy_net.pt` (7.9 MB). In `predict` it filters the rule's colour pixels (0.854 against 0.855 for the rules alone; alone it scores 0.843) |
+| `predict` | The whole prediction to `data/generated/predictions.geojson`: `uv run --frozen --group sam python -m marcaj.predict` (215 s, 3.9 GB peak) |
 | `judge` | The organizer formulas on the reference tiles, plus regressions against verdicts; `marcaj-judge` |
 | `review` | Verdict store at `data/review/verdicts.json` (tracked) |
 | `routing` | Organizer constraints, passable space, `check_route` |
@@ -68,6 +70,7 @@ Run from `backend/`:
 ```sh
 uv sync --frozen                                           # add --group lab for Jupyter, --group sam for torch/SAM 2.1 (--inexact keeps other groups)
 uv run --frozen marcaj-scene --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip [--predictions P.geojson]
+uv run --frozen --group sam python -m marcaj.predict      # the whole prediction (torch for canopy_net)
 uv run --frozen marcaj-judge                               # score predictions in data/generated/scene.json
 uv run --frozen marcaj-pack --scene ../data/generated/predictions.geojson    # dry run: --scene ../data/generated/scene.json --source reference --only a.tif,b.tif
 uv run --frozen uvicorn marcaj.api:app --reload --port 8000   # client app; build web/ first with npm run build
@@ -85,6 +88,7 @@ The web build (`cd web && npm run build`) also typechecks. There are no test fil
 - The source orthomosaic (EPSG:4326, 659 MB) has overviews; the map imagery comes from it, not from the tiles.
 - Passable space has 2 disconnected components, and inter-rows must bridge them. START lies inside a passage. The study area is 81.5 ha, not the brief's 145 ha.
 - The reference tiles hold straight 2-point rows 2.5–2.8 m apart, canopies of about 0.5 m², inter-rows about 77% of a vineyard tile and canopy about 10%.
+- The reference is drawn from its row lines: inter-rows are exactly axis ± 0.30 m, canopies are cut 0.30 m from their row line, and `disrupted` also counts a ≥ 5 m stretch from the tile edge to the first canopy. Normalised ExG makes shadow look green; plain 2g − r − b in pixel values does not.
 - Sentinel-2 Earth Search `sentinel-2-c1-l2a` uses reflectance = DN × 1e-4 − 0.1; ignore the offset and NDVI is biased. It is on tile 35TPN, the same CRS. It cannot see 5 m gaps.
 - Codex CLI: `/opt/homebrew/bin/codex` 0.145 rejects the account's model. Use `/Applications/ChatGPT.app/Contents/Resources/codex exec … < /dev/null`.
 - The client server started by a launcher has no `--reload`. After changing Python code, restart it, or it keeps serving the old payload.

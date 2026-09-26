@@ -10,7 +10,9 @@ variables that separated the hand-drawn plots in `research/probes/plot_variables
   orchards (0.89), but not the background (0.75).
 
 ExG is high-passed by normalised convolution over valid pixels only, and the bank uses smooth log-Gabor
-windows, so neither the no-data border nor hard filter edges ring across the map."""
+windows, so neither the no-data border nor hard filter edges ring across the map. `tophat_m` swaps the high-pass
+for a white top-hat (only structures narrower than that stay): it lifts 10-13 m strips of young vines from ratio 0.7-1.1
+to 4-14 and keeps orchards below 1, but as the only seed source it fragments plots (research/notes/plots.md), so it is off."""
 
 import time
 from dataclasses import dataclass
@@ -54,14 +56,18 @@ def _halve(array: np.ndarray) -> np.ndarray:
     return array[:height, :width].reshape(height // 2, 2, width // 2, 2).mean(axis=(1, 3))
 
 
-def compute_layers(rgb: np.ndarray, transform: Affine, smooth_m: float = 2.0) -> Layers:
+def compute_layers(rgb: np.ndarray, transform: Affine, smooth_m: float = 2.0, tophat_m: float | None = None) -> Layers:
     excess, valid_px = exg(rgb)
     green = _halve((excess > GREEN_EXG).astype(np.float32))
     excess, valid = _halve(excess), _halve(valid_px.astype(np.float32)) > 0.99
     px = LAYER_PX_M
-    weight = ndimage.gaussian_filter(valid.astype(np.float32), 4 / px)
-    local_mean = ndimage.gaussian_filter(np.where(valid, excess, 0), 4 / px) / np.maximum(weight, 1e-6)
-    spectrum = np.fft.rfft2(np.where(valid, excess - local_mean, 0).astype(np.float32))
+    if tophat_m:
+        size = round(tophat_m / px)
+        background = ndimage.grey_opening(np.where(valid, excess, excess.max()), size=(size, size))
+    else:
+        weight = ndimage.gaussian_filter(valid.astype(np.float32), 4 / px)
+        background = ndimage.gaussian_filter(np.where(valid, excess, 0), 4 / px) / np.maximum(weight, 1e-6)
+    spectrum = np.fft.rfft2(np.where(valid, excess - background, 0).astype(np.float32))
     fy = np.fft.fftfreq(excess.shape[0], px)[:, None]
     fx = np.fft.rfftfreq(excess.shape[1], px)[None, :]
     radius, direction = np.hypot(fx, fy), np.arctan2(fy, fx)

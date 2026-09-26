@@ -1,4 +1,4 @@
-"""The whole prediction: plots and row axes, inter-rows, canopies, and per-tile row and inter-row attributes, written to
+"""The whole prediction: plots and row axes, inter-rows, canopies, waste boxes, and per-tile row and inter-row attributes, written to
 data/generated/predictions.geojson for the lab and marcaj-pack. Run: uv run --frozen python -m marcaj.predict"""
 
 import json
@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from marcaj import canopy, plots, rows
+from marcaj import canopy, canopy_net, plots, rows, waste
 from marcaj.layers import Layers
 from marcaj.tiles import DATA_DIR, REPO_ROOT, Tile, load_tiles
 
@@ -20,7 +20,9 @@ def predict(params: plots.PlotParams = plots.PlotParams(), data_dir: Path = DATA
     plot_rows = canopy.plot_rows(found)
     found += rows.interrow_areas(found, plots.exclusions(data_dir))
     # ponytail: canopy and per-tile attributes each read the vineyard tiles; share one read if the 70 s matters
-    found += [feature for tile in tiles for feature in canopy.tile_canopies(tile, plot_rows)]
+    # the network keeps the rule's colour pixels it accepts: 0.855, a tie with the rules; combine="net" alone gives 0.843
+    found += [feature for tile in tiles for feature in canopy_net.tile_canopies(tile, plot_rows, combine="and", threshold=0.2, flips=False)]
+    found += waste.detect(tiles, found, data_dir)[0]
     return rows.per_tile(found, tiles)
 
 
