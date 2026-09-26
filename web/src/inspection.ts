@@ -2,7 +2,8 @@ import type { MapFeature } from './scene-types';
 import './inspection.css';
 
 // Roles, point statuses and farmer scores (GET /api/points, POST /api/points/{id}/status). One field is one farmer.
-// No authentication: the role is picked in the page (?role=farmer), a single-site demo.
+// No authentication: the role is picked with the site-wide switch (?role=farmer, remembered in this browser), a
+// single-site demo.
 export type Role = 'inspector' | 'farmer';
 export type PointStatus = 'open' | 'in_progress' | 'fixed' | 'false_positive';
 export type PointRecord = { status: PointStatus; by: Role; at: string; note: string; approved: boolean };
@@ -14,6 +15,7 @@ type Summary = { records: Record<string, PointRecord>; fields: Record<string, Fi
 type Sources = { changed: () => void };
 
 const CLOSED: PointStatus[] = ['fixed', 'false_positive'];
+const ROLE_KEY = 'agrocontrol-role';
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing inspection element: ${id}`);
@@ -40,8 +42,9 @@ function chipText(record: PointRecord | undefined): string {
 }
 
 export function createInspection(sources: Sources) {
-  const params = new URLSearchParams(location.search);
-  let role: Role = params.get('role') === 'farmer' ? 'farmer' : 'inspector';
+  let remembered: string | null = null;
+  try { remembered = localStorage.getItem(ROLE_KEY); } catch { /* storage blocked: the URL still carries the role */ }
+  let role: Role = (new URLSearchParams(location.search).get('role') ?? remembered) === 'farmer' ? 'farmer' : 'inspector';
   let summary: Summary = { records: {}, fields: {} };
   let error = '';
   let busy = false;
@@ -84,11 +87,12 @@ export function createInspection(sources: Sources) {
   function applyRole(): void {
     document.body.dataset.role = role;
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-role]')) button.setAttribute('aria-pressed', String(button.dataset.role === role));
-    // a farmer plans only their own field's walk
-    const scope = element<HTMLSelectElement>('route-scope');
-    if (role === 'farmer' && scope.value !== 'field') { scope.value = 'field'; scope.dispatchEvent(new Event('change')); }
-    scope.disabled = role === 'farmer';
+    const url = new URL(location.href);
+    url.searchParams.set('role', role);
+    history.replaceState(null, '', url);
+    try { localStorage.setItem(ROLE_KEY, role); } catch { /* a convenience only */ }
     element('missing-toggle').hidden = role !== 'farmer';
+    // one field is one farmer: a farmer plans only their own field's walk
     if (role === 'farmer' && location.hash === '#all-fields') location.hash = 'per-field';
   }
 
@@ -154,9 +158,6 @@ export function createInspection(sources: Sources) {
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-role]')) {
     button.addEventListener('click', () => {
       role = button.dataset.role === 'farmer' ? 'farmer' : 'inspector';
-      const url = new URL(location.href);
-      url.searchParams.set('role', role);
-      history.replaceState(null, '', url);
       applyRole();
       void load();
     });
@@ -172,6 +173,8 @@ export function createInspection(sources: Sources) {
     statusControls,
     renderScore,
     score: (field: string): FieldScore | undefined => summary.fields[field],
+    /** A point's latest status record; none means open. */
+    record: (id: string | undefined): PointRecord | undefined => id ? summary.records[id] : undefined,
     /** The inspector sees every point; a farmer sees waste, and missing canopy when they ask for it. */
     visible: (item: MapFeature): boolean => role === 'inspector' || isWaste(item) || (element<HTMLInputElement>('farmer-missing').checked && isMissing(item)),
     /** Extra POST /api/route fields: a farmer's walk covers only the open points they see. */

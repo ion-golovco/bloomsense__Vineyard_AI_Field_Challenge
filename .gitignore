@@ -9,3 +9,8 @@ output/
 data/raw/
 data/generated/
 data/app/
+
+# tool and editor leftovers
+.playwright-mcp/
+.context/
+.ipynb_checkpoints/

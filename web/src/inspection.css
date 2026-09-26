@@ -1,10 +1,12 @@
 /* Roles, farmer score and point status (inspection.ts); kept apart from style.css */
-.role-switch{display:flex;align-self:flex-start;padding:2px;border:1px solid #d9ddd3;border-radius:9px;background:#f6f7f3}
-.role-switch button{min-height:28px;padding:3px 9px;border:0;border-radius:7px;background:transparent;color:#5d6a5b;font-size:11px;font-weight:750}
+/* the site-wide role switch, top right on every view (yield page included) */
+.role-switch{position:absolute;z-index:950;top:18px;right:20px;display:flex;align-items:center;gap:3px;padding:3px 3px 3px 11px;border:1px solid #e3e6df;border-radius:12px;background:#fffffff7;box-shadow:0 3px 15px #1c20191f}
+.role-switch>span{margin-right:5px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#5d6a5b}
+.role-switch button{min-height:32px;padding:4px 12px;border:0;border-radius:9px;background:transparent;color:#4f5b4d;font-size:12px;font-weight:750}
+.role-switch button:hover{background:#f0f2ec}
 .role-switch button[aria-pressed="true"]{background:#24221f;color:#fff}
-.role-switch button:focus-visible,.status-actions button:focus-visible{outline:2px solid #7e22ce;outline-offset:2px}
+.status-actions button:focus-visible{outline:2px solid #7e22ce;outline-offset:2px}
 body[data-role="farmer"] [data-nav="all-fields"]{display:none}
-.field-control .field-label .section-kicker{display:none}  /* the role switch takes its place */
 
 .field-score{margin:0 18px 10px;padding:9px 12px;border-radius:11px;background:#f4f6f1;border-left:4px solid #8a948a}
 .field-score[data-band="good"]{border-left-color:#2f7d32}
@@ -18,7 +20,7 @@ body[data-role="farmer"] [data-nav="all-fields"]{display:none}
 .field-score p:empty{display:none}
 .field-score .score-error{color:#b42318}
 
-.missing-toggle{display:flex;align-items:center;gap:7px;margin:0 18px 8px;font-size:12px;color:#334038}
+.missing-toggle{display:flex;align-items:center;gap:7px;font-size:12px;color:#334038}
 .missing-toggle[hidden]{display:none}
 .stop-item{border-bottom:1px solid #edf0eb}
 .stop-list .stop-item>button{border-bottom:0}
@@ -33,14 +35,15 @@ body[data-role="farmer"] [data-nav="all-fields"]{display:none}
 .stop-list .status-actions button:hover{background:#faf5ff}
 
 @media(max-width:700px){
-  /* the switch shares the heading row: the map tools and impact card sit at fixed offsets below the field card */
-  .field-control .field-label{flex-direction:row-reverse;align-items:center;justify-content:space-between;gap:8px}
+  /* the switch shares the top line with the status banner (style.css) */
+  .role-switch{top:8px;right:8px;padding:2px}
+  .role-switch>span{display:none}
+  .role-switch button{min-height:28px;padding:3px 9px;font-size:11px}
   #score-detail{display:none}
-  .role-switch button{min-height:24px;padding:2px 7px;font-size:10px}
   .field-score{margin:0 13px 6px;padding:5px 9px}
   .score-head strong{font-size:18px}
   .field-score p{margin-top:2px;font-size:9px}
   .point-status{padding:0 11px 7px 42px}
   .stop-list .status-actions button{min-height:24px;font-size:10px}
-  .missing-toggle{margin:0 13px 6px;font-size:10px}
+  .missing-toggle{font-size:11px}
 }

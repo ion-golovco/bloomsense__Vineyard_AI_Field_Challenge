@@ -21,6 +21,8 @@ export type MapProperties = {
   target_status?: TargetStatus[];
   outside_budget_m?: number;
   robust_outside_m?: number;
+  targets?: number;  // routes: the visit points they were planned over, and how many they pass within 2 m
+  visited?: number;
 };
 // visited within 2 m, over_budget (needs_outside_m: outside metres reaching it would add), unreachable or missed
 export type TargetStatus = { id: string; status: string; distance_m: number; needs_outside_m: number | ''; reason: string };

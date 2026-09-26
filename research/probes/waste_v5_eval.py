@@ -76,6 +76,6 @@ if __name__ == "__main__":
         ev.evaluate(f"v4.5 boxes in scope [all {half}]", [b for b in v45_in if inside(shape(b["geometry"]))], [it for it in items if inside(it[0])])
     base = waste.WasteParams()
     off = replace(base, pile_area_m2=(9.0, 9.0))
-    for name, params in (("v4.5 verifier", off), ("+ pile tier", base)):
+    for name, params in (("no pile tier", off), ("default (pile tier)", base)):
         for margin in (0.0, 1.0, 2.0):
             run(f"{name}, margin {margin}", in_scope(found_all, margin), params)

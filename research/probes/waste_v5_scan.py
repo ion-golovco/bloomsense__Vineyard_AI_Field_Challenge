@@ -13,11 +13,12 @@ from marcaj import waste
 from marcaj.tiles import REPO_ROOT, load_tiles
 
 OUT = REPO_ROOT / "data" / "generated" / "work" / "waste_v5"
+PREDICTIONS = REPO_ROOT / "data" / "generated" / "work" / "v45" / "predictions.geojson"  # pinned: other agents may rewrite predictions.geojson
 
 
 def main() -> None:
     started = time.perf_counter()
-    predictions = json.loads(waste.PREDICTIONS_PATH.read_text(encoding="utf-8"))["features"]
+    predictions = json.loads(PREDICTIONS.read_text(encoding="utf-8"))["features"]
     params = replace(waste.WasteParams(), workers=2)
     OUT.mkdir(parents=True, exist_ok=True)
     if "--boxes-only" in sys.argv:

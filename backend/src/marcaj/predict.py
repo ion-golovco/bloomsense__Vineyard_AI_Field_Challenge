@@ -29,12 +29,14 @@ def predict(params: plots.PlotParams = plots.PlotParams(), data_dir: Path = DATA
     `dropped_out` receives the plots `plots.verify_plots` dropped (block features with their vine evidence and reason)."""
     tiles = tiles or load_tiles(data_dir)
     found = list(found) if found is not None else plots.detect_plots(params, data_dir, layers, excess)
-    plot_rows = canopy.plot_rows(found)
     # ponytail: canopy and per-tile attributes each read the vineyard tiles; share one read if the 70 s matters
     # the network keeps the rule's colour pixels it accepts: 0.855, a tie with the rules; combine="net" alone gives 0.843
-    canopies = [feature for tile in tiles for feature in canopy_net.tile_canopies(tile, plot_rows, combine="and", threshold=0.2, flips=False)]
+    canopy_on = lambda rows_: [feature for tile in tiles for feature in canopy_net.tile_canopies(tile, canopy.plot_rows(rows_), combine="and", threshold=0.2, flips=False)]
+    canopies = canopy_on(found)
     # the lattice rows sit a median 7 cm (p95 0.19 m) off the canopy; canopy.py re-fits per tile, the exported rows follow here
     found = canopy.refit_rows(found, canopies)[0]
+    # canopy again on the refit rows, so the tube follows the rows as exported: judge canopy 0.851 -> 0.857 (research/notes/canopy_rules.md)
+    canopies = canopy_on(found)
     # a plot whose canopy does not look like vine rows goes with its rows and canopies, before inter-rows and waste see it
     found, canopies, dropped = plots.verify_plots(found, canopies, params, data_dir)
     if dropped_out is not None:

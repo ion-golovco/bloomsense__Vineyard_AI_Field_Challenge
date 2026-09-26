@@ -2,8 +2,9 @@
 hand-set verifiers. The rules (section 3) box clearly visible litter "within the vineyards and the land around them
 (anywhere on the tile)" and leave out tubes, stakes, posts, wires, hoses, stones, bare or pale soil, flowering shrubs,
 pruning residue, vehicles and machinery; "when in doubt, leave it out". `vineyard_id` is the block the box lies in, or
-the nearest predicted block within 10 m, otherwise empty. `WasteParams.scope = "interrow"` restores the 10:20 rule
-(inter-rows only).
+the nearest predicted block within 10 m, otherwise empty. Scope (the user, 20:30: "we only care about interrow waste"):
+the default `scope = "interrow"` keeps the predicted inter-rows plus the parts of the predicted blocks within
+`margin_m` = 2 m of one (row ends, canopy strips); `scope = "site"` scans the whole tile.
 
 Method, per tile at the native 0.025 m, in `params.workers` processes:
 1. Evidence: pixels that are neither soil nor vegetation against the 2 m median background: white (darkest channel
@@ -22,8 +23,11 @@ Method, per tile at the native 0.025 m, in `params.workers` processes:
    a thin line (narrow spread >= 0.04 m, length <= 3x width) and >= 0.9 m from a row axis (leaning and lying white
    tubes and stakes stay within about 0.75 m of theirs); or small bright white blobs of 0.02-0.15 m2 with luminance
    >= 220, chroma <= 20, distance >= 100, narrow spread >= 0.03 m, not a thin line and >= 0.55 m from a row axis;
+   or pale piles (stone heaps, dusty sheeting) of 0.15-1.5 m2 with luminance >= 208, chroma <= 32, distance >= 110,
+   narrow spread >= 0.10 m, hue <= 50 (tan; silvery shrubs and dry grass are greener) and >= 0.7 m from a row axis;
    coloured blobs of >= 0.02 m2 with chroma >= 80 and distance >= 100; black blobs never (vine shadows).
-   `accept_rest` elsewhere: white blobs of 0.03-1.5 m2, not a smooth disc (well lids), clipped share >= 0.05, chroma
+   `accept_rest` elsewhere: in a block, white blobs passing the strict or small tier, clear of pale structures and
+   buildings; otherwise white blobs of 0.03-1.5 m2, not a smooth disc (well lids), clipped share >= 0.05, chroma
    <= 25, luminance spread >= 9.5, lying in vegetation (ring green >= 0.5), clear of pale structures, >= 10 m from
    buildings and >= 0.55 m from a row axis (as the small tier); luminance >= 225 and density <= 0.03 outside the
    blocks' 10 m reach, or luminance >= 220 and density <= 0.10 in a block or its headland; blue blobs (hue 185-265)
@@ -38,6 +42,11 @@ count half) against 0.51 for the 18:50 verifier (60 boxes, recall 37/90). Split 
 -> 0.564, south 0.456 -> 0.550. Boxes are tight: against a whitish region grown around each confirmed item the median
 IoU is 0.79. Control: 0 boxes on the two organizer example tiles. 228,726 candidates on 311 tiles in 90 s with 2
 processes (1.2 GB peak).
+Inter-row scope (research/probes/waste_v5_eval.py and waste_v5_holdout.py, 21:10; in-sample): 63 of the 140 waste
+labels lie in the inter-rows or the blocks within 2 m of one. 27 boxes, 20 on labelled waste, 4 on labelled not, 3
+unlabelled, recall 20/63, F1 0.452 (strict one-to-one IoU >= 0.3: 11 matches, F1 0.244) against 0.327 (6, 0.148) for
+the v4.5 boxes in the same scope. Pile-tier thresholds re-fitted on either split half (north/south, tile-column
+parity) keep the tier and never beat these defaults on the other half.
 Run: uv run --frozen python -m marcaj.waste [--workers N] (writes data/generated/work/waste/waste_sitewide.geojson and
 candidates_site.json)."""
 
@@ -348,7 +357,7 @@ def accept_rest(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
     area = c["area_m2"]
     near = c["location"] in ("block", "headland")
     # in a block (row ends, canopy strips) the ground is dry grass or soil like the inter-rows', not green: the
-    # inter-row scrap tiers apply there too, clear of pale structures and buildings (in-block labels at P02, 20:55)
+    # inter-row scrap tiers apply there too, clear of pale structures and buildings (in-block labels at P02, 20:50)
     if (c["location"] == "block" and c["kind"] == "white" and c["structure"] == 0 and c["forbidden_m"] >= params.building_m
             and _white(c, params, pile=False)):
         return True

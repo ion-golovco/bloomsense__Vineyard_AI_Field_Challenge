@@ -44,7 +44,7 @@ The prediction stages are the calls in [`predict.py`](backend/src/marcaj/predict
 
 ### Neural network and classical parts
 
-**Neural network: [`canopy_net`](backend/src/marcaj/canopy_net.py).** A U-Net in plain PyTorch: 5 levels, 6 input channels (scaled RGB plus RGB chromaticity), 2 outputs, 1,964,546 parameters. It was randomly initialised (no downloaded weights) and self-trained on the rule-based canopy of 118 vineyard tiles, with the two organizer example tiles and their neighbours held out. It was never trained on hand-drawn Sireț3 geometry. In `predict` it runs on every tile a row crosses, in 1024 px windows with 64 px of context, and keeps the colour-rule pixels whose canopy probability exceeds 0.2. On the example tiles this filter ties with the rules alone (canopy 0.851 against 0.852); the network alone scores 0.843 ([notes](research/notes/canopy_net.md)). It runs on Apple MPS when available, otherwise CPU.
+**Neural network: [`canopy_net`](backend/src/marcaj/canopy_net.py).** A U-Net in plain PyTorch: 5 levels, 6 input channels (scaled RGB plus RGB chromaticity), 2 outputs, 1,964,546 parameters. It was randomly initialised (no downloaded weights) and self-trained on the rule-based canopy of 118 vineyard tiles, with the two organizer example tiles and their neighbours held out. It was never trained on hand-drawn Sireț3 geometry. In `predict` it runs on every tile a row crosses, in 1024 px windows with 64 px of context, and keeps the colour-rule pixels whose canopy probability exceeds 0.2. On the example tiles this filter ties with the rules alone (canopy 0.851 against 0.852); the network alone scores 0.843. `predict` runs the canopy a second time on the rows refit onto the first canopy, which lifts canopy to 0.857 ([notes](research/notes/canopy_net.md)). It runs on Apple MPS when available, otherwise CPU.
 
 Retraining (from `backend/`; the shipped weights are run `v14_deep` on label snapshot `ff679923`, 6,000 steps in 834 s on MPS):
 
@@ -66,7 +66,7 @@ cp ../data/generated/work/canopy_net/runs/v14_deep.pt ../models/canopy_net.pt
 | Inter-rows and attributes ([`rows`](backend/src/marcaj/rows.py)) | Polygons between neighbouring axes, inset 0.30 m from each, extended up to 1.5 m onto passages. `row_structure`: `disrupted` for a vine-free stretch of 5 m or more; `interrow_cover`: green share under 25% `bare_soil`, over 75% `vegetation`, else `mixed`; `unassessable` without evidence |
 | Obstacles ([`obstacles`](backend/src/marcaj/obstacles.py)) | Tree crowns and roofs that survive a 2.2 m morphological opening on the mosaic |
 | Waste ([`waste`](backend/src/marcaj/waste.py)) | Colour anomalies against a 2 m median background inside predicted inter-rows (plus 2 m inside blocks), accepted by a hand-set verifier |
-| Inspection points ([`poi`](backend/src/marcaj/poi.py)) | Rows sampled every 5 cm; a canopy-free stretch of 5 m or more between planted parts is a `gap`, an unplanted row end next to planted neighbours is `planting` |
+| Inspection points ([`poi`](backend/src/marcaj/poi.py)) | Rows sampled every 5 cm; a canopy-free stretch between planted parts is a `gap` when it is 5 m or more, or 3 m or more and an outlier against its own field's canopy spacing (median, capped at the 2 m planting distance, plus 3 robust spreads, so a sparse field cannot hide its gaps); an unplanted row end next to planted neighbours is `planting` |
 | Route ([`route`](backend/src/marcaj/route.py)) | 0.5 m grid over inter-rows (eroded 0.3 m) and passages, 16-direction Dijkstra, nearest neighbour + 2-opt + Or-opt tour, 1.2% outside budget, checked by [`routing.check_route`](backend/src/marcaj/routing.py) |
 
 SAM 2.1 ([`sam.py`](backend/src/marcaj/sam.py), [`canopy_sam.py`](backend/src/marcaj/canopy_sam.py)) was tried in research and is not called by the pipeline.
@@ -155,6 +155,8 @@ cd ../backend && uv run --frozen uvicorn marcaj.api:app --host 127.0.0.1 --port 
 
 Open `http://127.0.0.1:8000` (inspector) or `http://127.0.0.1:8000/?role=farmer`. The app needs `data/generated/scene.json` (from `run_all.sh` or `marcaj-scene`).
 
+For the pitch, `scripts/demo.sh` starts the app and the Telegram bot together (Ctrl+C stops both); the 2-minute click path and the fallbacks are in [docs/DEMO.md](docs/DEMO.md).
+
 - Map: drone imagery rendered from the source orthomosaic, fields with `vineyard_id`, rows with `row_id`, canopies, inter-rows, waste and inspection points.
 - Measurements: site totals, each field, and a sortable row table; the same numbers as `measurements.csv`. A field not yet annotated in Marcaj is measured from the predictions and marked as a model estimate.
 - Routes: the site route and one route per field, per confidence cutoff (all, >= 0.5, >= 0.7), with length and visited targets. "Plan a walk" sets start and end on the map for the whole farm or one field, calls `POST /api/route`, and downloads the result as an official-format `route.geojson`.
@@ -181,6 +183,24 @@ Kept out of the client:
 - Local judge: `uv run --frozen marcaj-judge [--json report.json]` scores the predictions in `data/generated/scene.json` against the example tiles (build that scene with `marcaj-scene --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip --predictions ../data/generated/predictions.geojson`).
 - [`research/probes/`](research/probes/) and [`research/notes/`](research/notes/): experiments and their results, not pipeline stages.
 
+## Telegram bot
+
+Farmers don't install another app, so the route also goes to Telegram. [`marcaj.telegram_bot`](backend/src/marcaj/telegram_bot.py) sends the precomputed routes in `data/generated/routes.geojson` (it never plans one) and uses only the Python standard library and the existing dependencies.
+
+1. In Telegram, open @BotFather, send `/newbot`, pick a name and a username, and copy the token it returns.
+2. Run the bot from `backend/` (keep the token out of git and out of `.env.example`):
+
+```sh
+TELEGRAM_BOT_TOKEN=<token> uv run --frozen python -m marcaj.telegram_bot
+uv run --frozen python -m marcaj.telegram_bot --render V06-03 --out ../data/generated/work/telegram/V06-03.png   # offline, prints the message
+uv run --frozen python -m marcaj.telegram_bot --check                                                          # every route: order and picture checks
+```
+
+- `/start` lists the fields. `/field V06-03`, or just `V06-03`, sends that field's walk; `/site` sends the whole farm.
+- The reply is one picture and one message. The picture is the drone mosaic around the route with the route in yellow, START, the stops numbered in walking order (red: missing vines, blue: waste, grey: skipped), a legend, the length and a scale bar. When START is far from the field, the picture frames the field and marks where the route comes in, with the walking distance to START.
+- The message gives the length, the walking time at 4 km/h and a numbered checklist in the same order: what to check at each stop and a Google Maps link. Skipped points are counted; a long list ends with "…and N more on the map".
+- The bot uses long polling, so it needs no public address. It handles each message on its own, answers an unknown field with the list, and retries with backoff when the network drops.
+
 ## Docker
 
 ```sh
@@ -200,7 +220,7 @@ The image is Python 3.11 slim with `uv sync --frozen --group sam`, the web clien
 
 ## Timing and hardware
 
-> Measured on 26 Sep 2026, pipeline v4.5 (route rows on the v4 prediction).
+> Measured on 26 Sep 2026: prediction on the final model run (v5); route rows on the v4.5 and v5 predictions.
 
 Apple M4 Pro (12 cores), 24 GB RAM, macOS 26.6, Python 3.11.16, PyTorch 2.14.0 on Apple MPS.
 
@@ -208,13 +228,13 @@ Apple M4 Pro (12 cores), 24 GB RAM, macOS 26.6, Python 3.11.16, PyTorch 2.14.0 o
 |---|---|---|---|
 | 0.2 m mosaic of the 311 tiles (cold run only) | inside `marcaj.predict` | 11 s | |
 | 0.4 m plot layers (cold run only; a top-hat variant is cached beside them) | inside `marcaj.predict` | 17 s | |
-| Full prediction, 311 tiles | `python -m marcaj.predict` | 285 s (287 s process) | 3.85 GB RSS |
+| Full prediction, 311 tiles (canopy runs twice) | `python -m marcaj.predict` | 406 s (408 s process) | 3.50 GB RSS |
 | Inspection points | `python -m marcaj.poi` | 13 s | 0.6 GB |
-| Route export: official route, site and per-field routes at 3 cutoffs, with and without row hops | `marcaj-export` | 390-407 s | 2.5-3.4 GB |
+| Route export: official route, site and per-field routes at 3 cutoffs, with and without row hops | `marcaj-export` | 340-455 s | 2.5-3.4 GB |
 | One route plan, cold | API warm-up | 130-150 s | |
 | Route on request, warm plan | `POST /api/route` | 0.3-3.1 s | |
 
-`scripts/run_all.sh` in automatic mode takes about 12 minutes on this machine, summed from the rows above plus packing, obstacles and scene building (not timed as one run). The v4.5 prediction produced 36 blocks, 1,900 row pieces, 1,862 inter-row pieces, 14,594 canopies and 74 waste boxes. Waste runs in 2 worker processes; canopy, attributes and waste work tile by tile, and the site-wide plot search runs on the 0.2 m mosaic (64 times fewer pixels than the tiles).
+`scripts/run_all.sh` in automatic mode takes about 14 minutes on this machine, summed from the rows above plus packing, obstacles and scene building (not timed as one run). The v5 prediction produced 40 blocks, 677 rows (1,960 row pieces per tile), 1,913 inter-row pieces, 14,616 canopies and 30 waste boxes. Waste runs in 2 worker processes; canopy, attributes and waste work tile by tile, and the site-wide plot search runs on the 0.2 m mosaic (64 times fewer pixels than the tiles).
 
 ## Evaluation
 
@@ -222,12 +242,12 @@ Apple M4 Pro (12 cores), 24 GB RAM, macOS 26.6, Python 3.11.16, PyTorch 2.14.0 o
 
 | Criterion (points) | Score |
 |---|---|
-| Canopy (25): 0.6 x IoU + 0.4 x F1 | 0.851 (IoU 0.818, F1 0.902) |
+| Canopy (25): 0.6 x IoU + 0.4 x F1 | 0.857 (IoU 0.827, F1 0.901) |
 | Row axes (8) | 0.970 |
 | Attributes (5) | 0.974 |
 | Grouping by `vineyard_id` (2) | 1.000 |
-| Counts and measurements (10) | 0.895 |
-| **Points, of the 50 the judge covers** | **44.87** |
+| Counts and measurements (10) | 0.897 |
+| **Points, of the 50 the judge covers** | **45.03** |
 
 These tiles were used while tuning, so this is a sanity check, not a holdout estimate. Waste (10), route (25) and engineering (15) are not scored locally; the examples contain no waste. The judge passed its controls: an exact copy of the reference scores 50/50, rows shifted 0.35 m sideways score 1.0 and at 0.6 m score 0.0, half the canopies dropped give 0.576, flipped attributes give 0, and one block for everything gives grouping 0.52.
 

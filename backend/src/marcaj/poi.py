@@ -1,7 +1,8 @@
 """Inspection points (app-only `inspection` Points in EPSG:32635, never Marcaj labels; docs/SPEC.md section 12).
 
 Gap POIs (`reason` `gap`) are the challenge route targets: a visible stretch of at least 5 m along a row with no vine,
-between two planted parts of the same global row. Each row is sampled every 5 cm along its axis across all its
+between two planted parts of the same global row, or a shorter one (from 3 m) that is an outlier against its field's own
+canopy spacing (`GAP_RULE` "deviation", `field_gap_m`). Each row is sampled every 5 cm along its axis across all its
 per-tile pieces (merged by `row_id`, so a gap across a tile edge is one gap, not two tile-edge stretches). A sample is
 planted when a canopy polygon lies within 0.3 m of the axis (the reference canopies are cut there). Pixel vine green
 (ExG > 0.11, runs >= 0.55 m, as `rows._row_structure`) is kept per gap as `green_share`, not as planted evidence: on
@@ -46,6 +47,15 @@ TUBE_M = 0.30       # the reference canopies are cut at 0.30 m from their row li
 GREEN_EXG = 0.11    # rows.GREEN_EXG
 VINE_RUN_M = 0.55   # rows.VINE_RUN_M: shorter green runs along the row are weeds
 GAP_M = 5.0         # the organizers' `disrupted` gap
+# gap rule: "fixed" flags every canopy-free stretch of GAP_M; "deviation" also flags a shorter one that is an outlier
+# against its own field's canopy spacing (`field_gap_m`, the mentors' hint): its canopy-to-canopy distance above the
+# field's median by GAP_K robust sigmas, never under GAP_FLOOR_M (normal variation, one missing plant at ~2 m)
+GAP_RULE = "deviation"  # research/probes/poi_dev_eval.py: +46 targets, all 97 fixed ones kept; 19/24 new look real or partly
+GAP_K = 3.0
+GAP_FLOOR_M = 3.0
+EXPECTED_PITCH_M = 2.0  # the agronomists' planting distance: caps a field's median so a gappy field cannot inflate it
+MIN_PAIRS = 30      # a field with fewer canopy pairs on visible rows keeps GAP_M
+SHORT_GREEN = 0.1   # a deviation-only gap (under GAP_M) with more vine green is dark, sparse-leaved vines (V19-11, V21-13)
 DARK_DN = 40.0      # mean RGB under this is deep shadow
 MAX_HIDDEN = 0.2    # share of a gap that may be hidden (no piece, no-data, shadow)
 MAX_GREEN = 0.75    # share of a gap with vine green (rows.VINE_RUN_M runs) above which it is a missed row, not a gap
@@ -157,12 +167,36 @@ def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
 
 
-def row_gaps(rows: list[_Row], green: bool = False, min_gap_m: float = GAP_M) -> list[dict[str, Any]]:
+def field_gap_m(rows: list[_Row], k: float = GAP_K, floor: float = GAP_FLOOR_M) -> dict[str, float]:
+    """Per `vineyard_id`, the canopy-free length an interior gap needs to deviate from the field's own spacing: the
+    canopy-to-canopy (centre) distance of consecutive canopy runs along visible axes has median m and robust sigma s
+    (1.4826 MAD), and a gap's distance is its empty length plus the field's median run length r, so the threshold is
+    max(`floor`, min(m, `EXPECTED_PITCH_M`) + k s - r), and never over `GAP_M`: a stretch that long is a gap in any
+    field, however gappy the field is overall. Fields with under `MIN_PAIRS` pairs are left out (callers use `GAP_M`)."""
+    pitch: dict[str, list[float]] = defaultdict(list)
+    runs: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        hidden = ~row.seen | row.dark
+        planted = _runs(row.canopy)
+        runs[row.vineyard_id] += [(b - a) * SAMPLE_M for a, b in planted]
+        pitch[row.vineyard_id] += [(a1 + b1 - a0 - b0) / 2 * SAMPLE_M for (a0, b0), (a1, b1) in zip(planted, planted[1:])
+                                   if hidden[b0:a1].mean() <= MAX_HIDDEN]
+    out = {}
+    for vineyard_id, distances in pitch.items():
+        if len(distances) >= MIN_PAIRS:
+            median = float(np.median(distances))
+            sigma = 1.4826 * float(np.median(np.abs(np.array(distances) - median)))
+            out[vineyard_id] = min(GAP_M, max(floor, min(median, EXPECTED_PITCH_M) + k * sigma - float(np.median(runs[vineyard_id]))))
+    return out
+
+
+def row_gaps(rows: list[_Row], green: bool = False, min_gap_m: float = GAP_M, field_m: dict[str, float] | None = None) -> list[dict[str, Any]]:
     """Every stretch of at least `min_gap_m` without a vine on a row (`sample_rows`): `gap` between two planted parts,
     and `planting` at a row end, where the row's own axis runs on unplanted past its last vine while the median of
     its 2 + 2 nearest planted neighbours in the plot is planted there (a staggered block end cancels in the median).
     Each is a dict with the row's IDs, the end points on the axis, the length, the hidden share and the row's planted
-    share. `green` also counts pixel vine green as planted."""
+    share. `green` also counts pixel vine green as planted. `field_m` (`field_gap_m`) replaces `min_gap_m` for interior
+    gaps of the fields it holds; row ends keep `min_gap_m`."""
     run = np.ones(round(VINE_RUN_M / SAMPLE_M), bool)
     vine_green = {id(row): ndimage.binary_opening(row.green, structure=run) for row in rows}
     planted = {id(row): row.canopy | (vine_green[id(row)] if green else False) for row in rows}
@@ -175,7 +209,7 @@ def row_gaps(rows: list[_Row], green: bool = False, min_gap_m: float = GAP_M) ->
 
     def add(row: _Row, kind: str, start: int, end: int, a: np.ndarray, b: np.ndarray, share: float, hidden: np.ndarray) -> None:
         length = float(np.linalg.norm(b - a))
-        if length >= min_gap_m:
+        if length >= ((field_m or {}).get(row.vineyard_id, min_gap_m) if kind == "gap" else min_gap_m):
             gaps.append({"kind": kind, "vineyard_id": row.vineyard_id, "row_id": row.row_id, "start": a, "end": b, "gap_m": length,
                          "hidden": float(hidden[start:end].mean()), "green": float(vine_green[id(row)][start:end].mean()),
                          "row_planted": share, "tiles": sorted(row.tiles)})
@@ -209,8 +243,10 @@ def _reach(obstacle: dict[str, Any]) -> float:
     return OBSTACLE_M[obstacle["obstacle_type"] if obstacle.get("in_block", 1.0) >= 0.5 else "tree"]
 
 
-def gap_pois(rows: list[_Row], green: bool = False, obstacles: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:
-    """`inspection` Points at the midpoint of each visible row gap or missing row end of at least 5 m (`row_gaps`).
+def gap_pois(rows: list[_Row], green: bool = False, obstacles: list[dict[str, Any]] = (), rule: str = GAP_RULE,
+             k: float = GAP_K, floor: float = GAP_FLOOR_M) -> list[dict[str, Any]]:
+    """`inspection` Points at the midpoint of each visible row gap (`rule` "fixed": at least 5 m; "deviation": an outlier
+    against the field's canopy spacing, `field_gap_m(rows, k, floor)`) or missing row end of at least 5 m (`row_gaps`).
     `challenge` (a scored route target) is every `gap` with vine green over less than `MAX_GREEN` of it (a gap that is
     green all along is a row the canopy model missed: a 21 m and a 58 m one in view), and every `planting` stretch
     with no vine green at all (under 0.1) and at most `MAX_PLANTING_M` long. Of 16 random row ends 3 looked plausible,
@@ -222,7 +258,8 @@ def gap_pois(rows: list[_Row], green: bool = False, obstacles: list[dict[str, An
     blockers = [shape(f["geometry"]) for f in obstacles]
     blocker_tree = STRtree(blockers)
     out = []
-    for gap in row_gaps(rows, green):
+    field_m = field_gap_m(rows, k, floor) if rule == "deviation" else None
+    for gap in row_gaps(rows, green, field_m=field_m):
         if gap["hidden"] > MAX_HIDDEN:
             continue
         x, y = (gap["start"] + gap["end"]) / 2
@@ -234,9 +271,11 @@ def gap_pois(rows: list[_Row], green: bool = False, obstacles: list[dict[str, An
         extra = {"stretch": gap["kind"], "obstacle_type": obstacles[int(near[0])]["properties"]["obstacle_type"]} if len(near) else {}
         out.append({"type": "Feature", "geometry": mapping(Point(x, y)), "properties": {
             "label": "inspection", "source": "prediction", "id": f"{reason.upper()}-{gap['row_id']}-{round(x) % 10000:04d}-{round(y) % 10000:04d}",
-            "reason": reason, "challenge": not len(near) and (gap["green"] < MAX_GREEN if gap["kind"] == "gap" else gap["green"] < 0.1 and gap["gap_m"] <= MAX_PLANTING_M), **extra,
+            "reason": reason, "challenge": not len(near) and (gap["green"] < (MAX_GREEN if gap["gap_m"] >= GAP_M else SHORT_GREEN) if gap["kind"] == "gap"
+                                                             else gap["green"] < 0.1 and gap["gap_m"] <= MAX_PLANTING_M), **extra,
             "origin": "candidate", "status": "new",
             "vineyard_id": gap["vineyard_id"], "row_id": gap["row_id"], "gap_m": round(gap["gap_m"], 2),
+            "gap_rule": rule if gap["kind"] == "gap" else "fixed",
             "gap_start": [round(v, 2) for v in gap["start"]], "gap_end": [round(v, 2) for v in gap["end"]],
             "green_share": round(gap["green"], 2), "row_planted": round(gap["row_planted"], 2),
             "confidence": round((1 - gap["hidden"]) / 2 ** doubt, 2), "source_ref": gap["tiles"], "observed_at": FLIGHT_DATE}})
@@ -319,7 +358,8 @@ def write(features: list[dict[str, Any]], path: Path = POI_PATH) -> Path:
     return path
 
 
-def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: bool = True, obstacles_path: Path = OBSTACLES_PATH) -> None:
+def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: bool = True, obstacles_path: Path = OBSTACLES_PATH,
+         rule: str = GAP_RULE, k: float = GAP_K, floor: float = GAP_FLOOR_M) -> None:
     from marcaj import sentinel
 
     started = time.perf_counter()
@@ -330,7 +370,7 @@ def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: b
     if any(f["properties"].get("label") == "row" and f["properties"].get("source") == "reference" for f in features):
         features = [f for f in features if is_scored(f)]  # a Marcaj-export scene: its rows and canopies, not the model's
     rows = sample_rows(features)
-    pois = gap_pois(rows, obstacles=obstacles)
+    pois = gap_pois(rows, obstacles=obstacles, rule=rule, k=k, floor=floor)
     counts = {key: sum(p["properties"]["reason"] == key[0] and p["properties"]["challenge"] == key[1] for p in pois) for key in (("gap", True), ("gap", False), ("planting", True), ("planting", False), ("obstacle", False))}
     print(f"{counts} (reason, challenge) from {len(rows)} rows in {time.perf_counter() - started:.1f} s")
     if satellite:
@@ -354,5 +394,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, default=POI_PATH)
     parser.add_argument("--no-satellite", action="store_true")
     parser.add_argument("--obstacles", type=Path, default=OBSTACLES_PATH, help="obstacle polygons, used when the scene holds none")
+    parser.add_argument("--gap-rule", choices=("fixed", "deviation"), default=GAP_RULE)
+    parser.add_argument("--gap-k", type=float, default=GAP_K)
+    parser.add_argument("--gap-floor", type=float, default=GAP_FLOOR_M)
     args = parser.parse_args()
-    main(args.scene, args.output, not args.no_satellite, args.obstacles)
+    main(args.scene, args.output, not args.no_satellite, args.obstacles, args.gap_rule, args.gap_k, args.gap_floor)

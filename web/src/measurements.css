@@ -39,7 +39,7 @@ details:not([open]) > .measure-head { margin-bottom: 0; }
 .row-table tr:hover td { background: #faf5ff; }
 .row-table tr.selected td { background: #fff4dc; }
 .row-table tr.selected td button { color: #8a4b00; }
-#field-measure-panel { padding: 13px 18px 16px; }
+#field-measure-panel { padding: 12px 18px 14px; border-top: 1px solid #e9ece5; }
 #field-measure-panel .measure-open { margin-top: 10px; padding: 8px 11px; font-size: 11px; }
 @media (max-width:1020px) and (min-width:701px) {
   .measure-panel { left: 94px; width: 285px; max-height: calc(100dvh - 385px); }
@@ -73,9 +73,6 @@ details:not([open]) > .measure-head { margin-bottom: 0; }
   body[data-view="measurements"] .leaflet-top.leaflet-left { top: 153px; left: 68px; }
   body[data-view="measurements"] .map-key { top: 221px; bottom: auto; }
 }
-/* three plan tabs (Visit points, Evidence, Measurements) on one line */
-.plan-tabs button[data-panel] { white-space: nowrap; padding-left: 7px; padding-right: 7px; }
-@media (max-width:1020px) and (min-width:701px) { .plan-tabs button[data-panel] { padding-left: 5px; padding-right: 5px; } }
 /* clicks reach the rows: the highlight (routes pane) and field boundary canvases would otherwise take every map
    click; a click then selects the nearest row (measurements.ts) */
 body[data-view="measurements"] .leaflet-inspection-routes-pane canvas,

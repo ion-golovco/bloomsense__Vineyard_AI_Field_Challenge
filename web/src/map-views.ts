@@ -167,12 +167,13 @@ export function createMapViews(map: L.Map, sources: ViewSources) {
     if (view === 'all-fields' && showBoundaries) overview.addTo(map);
     if (view === 'analysis') analysis.addTo(map);
   }
-  function fitOverview(): void {
-    if (!bounds.isValid()) return;
+  /** Fit all fields (or `target`, a planned route) clear of the overview and savings panels. */
+  function fitOverview(target = bounds): void {
+    if (!target.isValid()) return;
     const width = window.innerWidth;
-    map.fitBounds(bounds.pad(0.08), {
+    map.fitBounds(target.pad(0.08), {
       paddingTopLeft: width <= 700 ? [12, 310] : width <= 1020 ? [390, 90] : [555, 90],
-      paddingBottomRight: width <= 700 ? [12, 220] : [30, 100], maxZoom: 17,
+      paddingBottomRight: width <= 700 ? [12, 220] : width <= 1020 ? [300, 100] : [345, 100], maxZoom: 17,  // clear of the savings card
     });
   }
   element('field-search').addEventListener('input', renderList);

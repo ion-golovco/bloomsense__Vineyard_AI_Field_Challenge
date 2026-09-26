@@ -42,6 +42,7 @@ from shapely.geometry import LineString, Point, mapping, shape
 from shapely.ops import unary_union
 
 from marcaj.mosaic import load_mosaic
+from marcaj.obstacles import OBSTACLES_PATH
 from marcaj.routing import VISIT_RADIUS_M, YOUNG_CANOPY_M2, _geometries, _length_in, check_route, check_spaces
 from marcaj.scene import PREDICTION, is_scored, waste_id
 from marcaj.tiles import REPO_ROOT
@@ -53,7 +54,7 @@ CHUNK = 1 << 20
 MARGIN_M = 0.75
 EDGE_PENALTY = 1.0
 # a metre outside passable space costs as much as this many inside: high, so the route takes long detours through lanes
-# and passages rather than spend outside budget. Site all-POI route on v4.5 (177 targets), budget 1.2% robust:
+# and passages rather than spend outside budget. Site all-POI route on v4.5 (177 targets), budget 1.2% robust, BLOCK_VALUE 0:
 # weight 20: 9,270 m, 120 visited; 40: 10,068 m, 129; 60: 10,492 m, 134 (1.18% robust, 0.60% plain); 100: 10,483 m, 132
 OUTSIDE_WEIGHT = 60.0
 CORRIDOR_M = 12.0
@@ -68,7 +69,10 @@ UNDERCOUNT = 1.3  # sampled raster outside metres of an unmeasured leg, times th
 MAX_ROUNDS = 8
 # a target in a block (vineyard_id) the route does not reach yet counts as 1 + BLOCK_VALUE targets, in `_add`'s targets
 # per outside metre and in `_best_routes`' choice, so the outside budget goes to one visit of every block with a gap or
-# waste before a further target of a block already visited; waste without a vineyard_id never counts as a block
+# waste before a further target of a block already visited; waste without a vineyard_id never counts as a block.
+# v4.5 site all-POI route at weight 60: 0 gives 134/177 targets in 17 of 23 blocks (10,492 m); 3 gives 132/177 in 19
+# (10,617 m, 1.20% robust / 0.62% plain): + V38-23 and V33-22-2, - one target each of V35-26b and V12-04 and 2 waste
+# outside blocks. Field routes are identical.
 BLOCK_VALUE = 3.0
 # Row hops: a walker may step across a vine row where it has no canopy, instead of going round the row end. A hop
 # joins the two lane cells HOP_REACH_M either side of the row axis, where a HOP_WIDTH_M wide corridor along the row
@@ -248,6 +252,16 @@ def _hop_edges(features: list[dict[str, Any]], grid: Grid, penalty: float, young
     return low[first], high[first], cost[first], tier[first], crossed[first]
 
 
+def _buildings(features: list[dict[str, Any]], path: Path = OBSTACLES_PATH) -> list:
+    """Building polygons of the world's `obstacle` features, of any source (they are predictions). A world with no
+    obstacle features (a Marcaj export: the scored world, or marcaj-export's scene) takes them from `path`, as
+    `marcaj.poi` does."""
+    found = [item for item in features if item["properties"].get("label") == "obstacle"]
+    if not found and path.is_file():
+        found = json.loads(path.read_text(encoding="utf-8"))["features"]
+    return [shape(item["geometry"]) for item in found if item["properties"].get("obstacle_type") == "building"]
+
+
 def build_grid(features: list[dict[str, Any]], space=None, hop_penalty: float | None = None, young_penalty: float | None = None,
                hop_rows: int = 1) -> Grid:
     """The walkable grid over `space` (default `robust_space`), with row hops at `hop_penalty` equivalent metres
@@ -283,9 +297,7 @@ def build_grid(features: list[dict[str, Any]], space=None, hop_penalty: float | 
     obstacles |= burn(list(canopies), True)
     # nobody walks through a building (marcaj.obstacles), even outside passable space: on v4.5 the site route crossed a
     # 66 m2 shed for 43 m of its outside metres
-    buildings = [shape(item["geometry"]) for item in features if item["properties"].get("label") == "obstacle"
-                 and item["properties"].get("obstacle_type") == "building" and is_scored(item)]
-    blocked = burn(_geometries(features, "forbidden") + buildings, True) | canopy | (obstacles & ~passable)
+    blocked = burn(_geometries(features, "forbidden") + _buildings(features), True) | canopy | (obstacles & ~passable)
     corridor = (ndimage.distance_transform_edt(~passable) * GRID_M <= CORRIDOR_M) & burn([area]) & ~blocked & _visible(transform, shape_)
     walkable = (passable & ~canopy) | corridor
     margin = ndimage.distance_transform_edt(passable) * GRID_M - GRID_M / 2

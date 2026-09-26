@@ -1,5 +1,5 @@
 import L from 'leaflet';
-import type { MapFeature, MeasuredBlock, MeasuredRow, Measurements } from './scene-types';
+import type { MapFeature, MeasuredBlock, MeasuredRow, MeasuredTotals, Measurements } from './scene-types';
 import './measurements.css';
 
 // Measurement tables from /api/scene (EPSG:32635 metres, the numbers of measurements.csv): the site totals card, the
@@ -10,6 +10,8 @@ type Sources = {
   open: () => void;
   /** Map padding [top-left, bottom-right] that keeps a fitted row clear of the panels. */
   padding: () => [L.PointTuple, L.PointTuple];
+  /** Detected missing-canopy points (gaps, missing planting) and waste spots in a field. */
+  spots: (field: string) => { gaps: number; waste: number };
 };
 type SortKey = 'row_id' | 'length_m' | 'row_structure';
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -93,7 +95,10 @@ export function createMeasurements(map: L.Map, sources: Sources) {
     basis.append(badge(item.estimate), note);
     const grid = document.createElement('dl');
     grid.className = 'measure-grid';
-    grid.append(...areaStats(item), stat('Rows', count.format(item.row_count)), stat('Total row length', `${metres.format(item.row_length_m)} m`));
+    const { gaps, waste } = sources.spots(item.vineyard_id);
+    // the field plan's card also counts what to visit; the Measurements view keeps its room for the row table
+    grid.append(stat('Rows', count.format(item.row_count)), stat('Total row length', `${metres.format(item.row_length_m)} m`), ...areaStats(item),
+      ...(withLink ? [stat('Gaps', count.format(gaps), 'missing canopy'), stat('Waste spots', count.format(waste))] : []));
     card.append(basis, grid);
     if (withLink) {
       const link = document.createElement('button');
@@ -221,6 +226,9 @@ export function createMeasurements(map: L.Map, sources: Sources) {
       if (visible && !map.hasLayer(highlight)) highlight.addTo(map);
       if (!visible && map.hasLayer(highlight)) map.removeLayer(highlight);
     },
+    /** A field's measured totals, or the site's for `null`. */
+    totals: (vineyardId: string | null): MeasuredTotals | undefined =>
+      vineyardId === null ? data?.total : data?.blocks.find((item) => item.vineyard_id === vineyardId),
     /** The measured length of a row, for its map popup. */
     rowLength: (rowId: string, vineyardId?: string): number | undefined =>
       data?.rows.find((item) => item.row_id === rowId && (!vineyardId || item.vineyard_id === vineyardId))?.length_m,

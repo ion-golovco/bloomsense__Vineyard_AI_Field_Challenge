@@ -2,7 +2,7 @@ import L from 'leaflet';
 import type { AppView, MapFeature, Scene, TargetStatus } from './scene-types';
 import { createMapViews } from './map-views';
 import { createRoutePlanner } from './route-planner';
-import { createInspection, pointTitle } from './inspection';
+import { createInspection, isMissing, isWaste, pointTitle } from './inspection';
 import { initializeYieldView, updateYieldFields } from './yield-view';
 import { createMeasurements } from './measurements';
 import './style.css';
@@ -10,6 +10,11 @@ import './style.css';
 type Overlay = 'field' | 'route' | 'points' | 'row' | 'vineyard' | 'interrow_area' | 'access' | 'ndvi' | 'ndmi' | 'cadastre' | 'start';
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 const currency = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const distance = (metres: number): string => metres < 1000 ? `${Math.round(metres)} m` : `${number.format(metres / 1000)} km`;
+const duration = (minutes: number): string => {
+  const total = Math.round(minutes);
+  return total < 60 ? `${total} min` : `${Math.floor(total / 60)} h${total % 60 ? ` ${total % 60} min` : ''}`;
+};
 const el = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing element: ${id}`);
@@ -51,17 +56,15 @@ const measureVisible = new Set<Overlay>(['field', 'row', 'vineyard', 'interrow_a
 let visible = fieldVisible;
 let layerCounts: Record<Overlay, number> = { field: 0, route: 0, points: 0, row: 0, vineyard: 0, interrow_area: 0, access: 0, ndvi: 0, ndmi: 0, cadastre: 0, start: 0 };
 const layerNames: Record<Overlay, string> = { field: 'Field boundaries', route: 'Routes', points: 'Visit points', row: 'Vine rows', vineyard: 'Canopy segmentation', interrow_area: 'Inter-rows', access: 'Access & constraints', ndvi: 'NDVI zones', ndmi: 'NDMI zones', cadastre: 'Cadastru', start: 'Inspection start' };
-const usualByField = new Map<string, string>();
 const pointLayers = new Map<MapFeature, L.Layer>();
 let scene: Scene | null = null;
 let fields: MapFeature[] = [];
 let field: MapFeature | null = null;
 let boundary: L.GeoJSON | null = null;
 let targets: MapFeature[] = [];
-let routes: MapFeature[] = [];
-let routeLength: number | null = null;
-let minConfidence: number | null = null;
+let routes: MapFeature[] = [];  // the routes of the view's scope: the field's, or the site route on All fields
 let view: AppView = 'per-field';
+const scopeId = (): string | null => view === 'all-fields' ? 'site' : field ? fieldId(field) : null;
 const farmViews = createMapViews(map, {
   fields: () => fields, selected: () => field, features: () => scene?.features.features ?? [],
   satellite: () => scene?.sentinel ?? null, cadastre: () => scene?.cadastre ?? null,
@@ -71,17 +74,21 @@ const farmViews = createMapViews(map, {
 initializeYieldView();
 const inspection = createInspection({ changed: () => { farmViews.refreshOverview(); planner.refresh(); if (field) renderField(false); } });
 const planner = createRoutePlanner(map, {
-  fieldId: () => field ? fieldId(field) : null,
-  minConfidence: () => minConfidence,
+  scope: scopeId,
   filter: () => inspection.routeFilter(),
   organizerStart: () => {
     const start = scene?.features.features.find((item) => item.properties.label === 'start' && item.geometry.type === 'Point');
     return start && start.geometry.type === 'Point' ? L.latLng(start.geometry.coordinates[1], start.geometry.coordinates[0]) : null;
   },
+  fit: (bounds) => farmViews.fitOverview(bounds),
   changed: () => { if (field) renderField(false); },
 });
 const measurements = createMeasurements(map, {
   features: () => scene?.features.features ?? [], open: () => navigateView('measurements'), padding: () => fitPadding(),
+  spots: (id) => {
+    const inField = (scene?.features.features ?? []).filter((item) => item.properties.vineyard_id === id);
+    return { gaps: inField.filter((item) => item.properties.label === 'inspection' && isMissing(item)).length, waste: inField.filter(isWaste).length };
+  },
 });
 const fieldId =(item: MapFeature): string => item.properties.vineyard_id ?? '';
 const belongsToField = (item: MapFeature): boolean => item.properties.vineyard_id === fieldId(field!) ||
@@ -165,10 +172,7 @@ function applyVisibility(): void {
   el('cadastre-credit').hidden = !mapView || !visible.has('cadastre') || layerCounts.cadastre === 0;
   el('sentinel-credit').hidden = !mapView || !((visible.has('ndvi') && layerCounts.ndvi > 0) || (visible.has('ndmi') && layerCounts.ndmi > 0));
   farmViews.show(view, visible.has('field'));
-  planner.show(view === 'per-field');
-  const toggle = el<HTMLButtonElement>('route-toggle');
-  toggle.setAttribute('aria-pressed', String(routes.length > 0 && visible.has('route')));
-  toggle.firstChild!.textContent = routes.length === 0 ? 'Route unavailable ' : visible.has('route') ? 'Hide route ' : 'Show route ';
+  planner.show(view === 'per-field' || view === 'all-fields');
 }
 /** Map padding that keeps a fitted shape clear of the Measurements view's panels. */
 function fitPadding(): [L.PointTuple, L.PointTuple] {
@@ -216,6 +220,8 @@ function renderStops(): void {
     empty.append(icon, title, detail);
     list.append(empty);
   } else {
+    // the stops the shown route passes first, then those it leaves off (a stable sort keeps the scene order)
+    targets.sort((a, b) => Number(offRouteReason.has(a)) - Number(offRouteReason.has(b)));
     targets.forEach((item, index) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -226,7 +232,7 @@ function renderStops(): void {
       title.textContent = pointTitle(item);
       const meta = document.createElement('small');
       meta.textContent = [item.properties.source === 'prediction' ? 'Candidate point' : 'Mapped point', item.properties.row_id,
-        offRouteReason.has(item) ? 'not on this route' : ''].filter(Boolean).join(' · ');
+        view === 'all-fields' && item.properties.vineyard_id ? `Field ${item.properties.vineyard_id}` : '', offRouteReason.has(item) ? 'not on this route' : ''].filter(Boolean).join(' · ');
       if (offRouteReason.has(item)) button.title = offRouteReason.get(item)!;
       copy.append(title, meta);
       button.append(badge, copy);
@@ -239,45 +245,38 @@ function renderStops(): void {
       list.append(row);
     });
   }
-  text('plan-summary', targets.length
-    ? `${targets.length} visit point${targets.length === 1 ? '' : 's'} in this field · ${routes.length ? 'route available' : 'route pending'}`
-    : routes.length ? 'A field route is available, but no visit points were supplied.' : 'No route or visit points have been supplied for this field.');
-  text('route-status', (planner.current() && view === 'per-field' ? 'Planned route' : routes.length ? 'Field route available' : 'Route pending')
-    + (offRoute ? ` · ${offRoute} not on it` : ''));
-  el<HTMLButtonElement>('route-toggle').disabled = routes.length === 0;
 }
-function measuredRouteLength(): number | null {
-  if (!scene || !routes.length) return null;
-  const lengths = routes.map((item) => item.properties.length_m);
-  if (lengths.every((length) => typeof length === 'number' && Number.isFinite(length) && length > 0)) {
-    return lengths.reduce<number>((total, length) => total + (length ?? 0), 0);
-  }
-  const allRoutes = scene.features.features.filter((item) => item.properties.label === 'route');
-  const total = scene.metrics?.route_length_m;
-  return allRoutes.length === routes.length && typeof total === 'number' && Number.isFinite(total) && total > 0 ? total : null;
-}
+/** What the shown route saves against walking every row of the scope once: the same walk for both roles. */
 function updateSavings(): void {
-  const badge = el('impact-state');
-  const pending = (detail: string): void => {
-    text('money-saved', '—'); text('time-saved', '—'); text('impact-detail', detail);
-    badge.textContent = 'PENDING'; badge.classList.remove('calculated');
-  };
-  text('route-distance', routeLength === null ? '—' : routeLength < 1000 ? `${number.format(routeLength)} m` : `${number.format(routeLength / 1000)} km`);
-  if (!routes.length) return pending('Waiting for a route assigned to this field.');
-  if (routeLength === null) return pending('This field route has no measured length yet.');
-  const usual = input('usual-minutes');
-  const hourlyCost = input('hourly-cost');
+  const site = view === 'all-fields';
+  const rows = measurements.totals(site ? null : field ? fieldId(field) : null)?.row_length_m;
+  const walk = routes.reduce((total, item) => total + (item.properties.length_m ?? 0), 0);
+  const spots = routes.reduce((total, item) => total + (item.properties.visited ?? 0), 0);
   const speed = input('walking-speed');
-  const stopMinutes = input('stop-minutes');
-  if (speed === null || speed <= 0 || stopMinutes === null) return pending('Enter a valid walking speed and stop time.');
-  const planned = routeLength / 1000 / speed * 60 + targets.length * stopMinutes;
-  if (usual === null) return pending(`Planned walk: ${number.format(planned)} min. Add your usual time for this field.`);
-  const saved = usual - planned;
-  text('time-saved', `${saved < 0 ? '−' : ''}${number.format(Math.abs(saved))} min`);
-  text('impact-detail', `${number.format(usual)} min usual − ${number.format(planned)} min planned · estimate only`);
-  text('money-saved', hourlyCost === null ? '—' : `${saved * hourlyCost < 0 ? '−' : ''}${currency.format(Math.abs(saved / 60 * hourlyCost))} MDL`);
-  badge.textContent = hourlyCost === null ? 'ADD COST' : 'ESTIMATE';
-  badge.classList.add('calculated');
+  const hourlyCost = input('hourly-cost');
+  text('rows-distance', rows ? distance(rows) : '—');
+  text('route-distance', routes.length && walk > 0 ? distance(walk) : '—');
+  const status = targets.map((item) => inspection.record(item.properties.id)?.status ?? 'open');
+  const fixed = status.filter((item) => item === 'fixed').length;
+  const dismissed = status.filter((item) => item === 'false_positive').length;
+  text('points-state-label', site ? 'Visit points on the farm' : 'Visit points in this field');
+  text('points-state', targets.length ? `${targets.length - fixed - dismissed} open · ${fixed} fixed${dismissed ? ` · ${dismissed} not a problem` : ''}` : 'None');
+  const done = (time: string, detail: string, money = 'Add a labour cost to see the time saved in MDL.'): void => {
+    text('time-saved', time); text('impact-detail', detail); text('money-saved', money);
+  };
+  if (!rows) return done('—', 'No measured rows here to compare the walk with.');
+  if (!routes.length || walk <= 0) {
+    return done('—', `${inspection.role() === 'farmer' ? 'Plan your walk' : 'Plan a route'} to see the time it saves against walking all ${distance(rows)} of rows.`);
+  }
+  if (speed === null || speed <= 0) return done('—', 'Enter a walking speed above 0 km/h.');
+  const saved = (rows - walk) / 1000 / speed * 60;
+  const scope = site ? 'every row on the farm' : 'every row of this field';
+  if (saved <= 0) {
+    return done('0 min', `Here the walk from the start (${distance(walk)}) is longer than walking ${scope} once (${distance(rows)}): this field alone saves no walking. The whole-farm route saves the most.`, '');
+  }
+  done(`≈ ${duration(saved)}`,
+    `Walk ${distance(walk)} to ${spots} spot${spots === 1 ? '' : 's'} instead of ${distance(rows)} along ${scope}: about ${duration(saved)} saved at ${number.format(speed)} km/h. Estimate: route length against walking every row once.`,
+    hourlyCost === null ? undefined : `Worth about ${currency.format(saved / 60 * hourlyCost)} MDL at ${currency.format(hourlyCost)} MDL / hour.`);
 }
 // Visit points the shown route does not pass within 2 m of: grey and hollow, with why in a tooltip.
 let offRoute = 0;
@@ -313,9 +312,9 @@ function markOffRoute(shown: MapFeature[]): void {
 }
 function renderField(fit = true): void {
   if (!scene || !field) return;
-  // a route planned on request replaces the precomputed ones in the per-field view
-  const planned = view === 'per-field' ? planner.current() : null;
-  planner.refresh();  // its download button follows the field and cutoff too
+  // a route planned on request replaces the precomputed ones in its view
+  const planned = view === 'per-field' || view === 'all-fields' ? planner.current() : null;
+  planner.refresh();  // its labels, status and download button follow the field and view too
   pointLayers.clear();
   for (const group of Object.values(overlays)) group.clearLayers();
   addFeature(field, 'field', { color: '#fff', weight: 10, fillOpacity: 0, opacity: 0.95, interactive: false });
@@ -347,11 +346,10 @@ function renderField(fit = true): void {
       }
       continue;
     }
-    // one route per point-confidence cutoff: the field's own in the per-field view, the site-wide route in all fields
-    // a farmer's walk is always planned on request: the precomputed routes also visit missing canopy
-    if (label === 'route' && (planned || inspection.role() === 'farmer' || (item.properties.min_confidence ?? null) !== minConfidence
+    // the precomputed route over every point (no confidence cutoff): the field's own per field, the site-wide one on All
+    // fields; a farmer's walk is always planned on request: the precomputed routes also visit missing canopy
+    if (label === 'route' && (planned || inspection.role() === 'farmer' || item.properties.min_confidence != null
       || (item.properties.scope === 'site') !== (view === 'all-fields'))) continue;
-    if (label === 'inspection' && minConfidence !== null && (item.properties.confidence ?? 1) < minConfidence) continue;
     if ((label === 'inspection' || label === 'waste') && !inspection.visible(item)) continue;
     if (view !== 'all-fields' && !belongsToField(item)) continue;
     if (label === 'start') {
@@ -359,13 +357,13 @@ function renderField(fit = true): void {
       addFeature(item, 'start', {});
     } else if (label === 'route') {
       layerCounts.route += 1;
-      if (belongsToField(item)) routes.push(item);
+      if (view === 'all-fields' || belongsToField(item)) routes.push(item);
       shownRoutes.push(item);
       addFeature(item, 'route', { color: '#fff', weight: 11, opacity: 0.95, interactive: false });
       addFeature(item, 'route', { color: '#ed7625', weight: 6, opacity: 1, dashArray: '12 8' });
     } else if (label === 'inspection' || label === 'waste') {
       layerCounts.points += 1;
-      if (belongsToField(item)) targets.push(item);
+      if (view === 'all-fields' || belongsToField(item)) targets.push(item);
       if (item.geometry.type === 'Point') addFeature(item, 'points', {});
       else {
         const outline = addFeature(item, 'points', { color: '#ed7625', weight: 2, fillColor: '#ed7625', fillOpacity: 0.35 });
@@ -403,7 +401,6 @@ function renderField(fit = true): void {
   const satellite = scene.sentinel;
   text('evidence-satellite', satellite ? `${satellite.dates.length} dates before flight · ${layerCounts.ndvi + layerCounts.ndmi} low zones` : 'Not available');
   text('evidence-cadastre', scene.cadastre ? `${layerCounts.cadastre} parcel outline${layerCounts.cadastre === 1 ? '' : 's'}` : 'Not available');
-  routeLength = measuredRouteLength();
   const area = field.properties.area_m2;
   text('field-meta', `${typeof area === 'number' && Number.isFinite(area) ? `${(area / 10_000).toFixed(2)} ha · ` : ''}${field.properties.source === 'prediction' ? 'Candidate boundary from the model' : 'Mapped field boundary'}`);
   updateViewStatus();
@@ -439,7 +436,7 @@ function renderScene(data: Scene): void {
     option.textContent = 'No fields in scene';
     select.append(option);
     text('field-heading', 'No fields available'); text('field-meta', 'The current scene contains no field boundaries.');
-    text('status', 'No fields in the current scene'); text('plan-summary', 'Field boundaries are needed before inspection points can be shown.');
+    text('status', 'No fields in the current scene');
     text('target-count', '0'); return;
   }
   field = fields[0];
@@ -449,10 +446,8 @@ function renderScene(data: Scene): void {
 }
 
 function selectField(id: string): void {
-  if (field) usualByField.set(fieldId(field), el<HTMLInputElement>('usual-minutes').value);
   field = fields.find((item) => fieldId(item) === id) ?? null;
   el<HTMLSelectElement>('field-select').value = id;
-  el<HTMLInputElement>('usual-minutes').value = field ? usualByField.get(fieldId(field)) ?? '' : '';
   renderField();
 }
 el<HTMLSelectElement>('field-select').addEventListener('change', (event) => {
@@ -463,11 +458,6 @@ el('canopy-toggle').addEventListener('click', () => {
   applyVisibility();
 });
 el('fit-field').addEventListener('click', fitField);
-el<HTMLSelectElement>('route-confidence').addEventListener('change', (event) => {
-  const value = (event.currentTarget as HTMLSelectElement).value;
-  minConfidence = value ? Number(value) : null;
-  if (field) renderField();
-});
 for (const checkbox of document.querySelectorAll<HTMLInputElement>('[data-layer]')) {
   checkbox.addEventListener('change', () => {
     const name = checkbox.dataset.layer as Overlay;
@@ -475,20 +465,8 @@ for (const checkbox of document.querySelectorAll<HTMLInputElement>('[data-layer]
     applyVisibility();
   });
 }
-el('route-toggle').addEventListener('click', () => {
-  if (visible.has('route')) visible.delete('route'); else visible.add('route');
-  applyVisibility();
-});
-for (const id of ['usual-minutes', 'hourly-cost', 'walking-speed', 'stop-minutes']) el(id).addEventListener('input', updateSavings);
-for (const button of document.querySelectorAll<HTMLButtonElement>('[data-panel]')) {
-  button.addEventListener('click', () => {
-    for (const name of ['stops', 'evidence', 'field-measure']) el(`${name}-panel`).hidden = button.dataset.panel !== name;
-    for (const item of document.querySelectorAll<HTMLButtonElement>('[data-panel]')) {
-      item.classList.toggle('selected', item === button);
-      item.setAttribute('aria-pressed', String(item === button));
-    }
-  });
-}
+for (const id of ['hourly-cost', 'walking-speed']) el(id).addEventListener('input', updateSavings);
+const phone = matchMedia('(max-width: 700px)');
 function viewFromHash(): AppView {
   const hash = location.hash.slice(1);
   return hash === 'all-fields' || hash === 'analysis' || hash === 'yield' || hash === 'measurements' ? hash : 'per-field';
@@ -499,7 +477,16 @@ function updateViewStatus(): void {
   text('status', view === 'all-fields' ? `${fields.length} fields · ${pointCount} visit points across the scene` : view === 'measurements' ? `Measurements · ${field ? `Field ${fieldId(field)}` : 'no field selected'}` : view === 'analysis' ? `Satellite & land records · ${field ? `Field ${fieldId(field)}` : 'no field selected'}` : `${fields.length} fields in scene · ${routes.length ? 'field route available' : 'field route pending'}`);
 }
 function switchView(next: AppView, focus = true): void {
+  const moved = next !== view || !focus;  // the first call (no focus) places the blocks too
   view = next;
+  // one planner and one points list, moved into the panel of the view; the farm's list starts folded, a field's on phones
+  const plannerSlot = document.querySelector(`[data-planner-slot="${view}"]`);
+  const pointsSlot = document.querySelector(`[data-points-slot="${view}"]`);
+  if (plannerSlot && pointsSlot && moved) {
+    plannerSlot.append(el('route-planner'));
+    pointsSlot.append(el('points-details'));
+    el<HTMLDetailsElement>('points-details').open = view === 'per-field' && !phone.matches;
+  }
   visible = view === 'all-fields' ? allVisible : view === 'measurements' ? measureVisible : fieldVisible;
   document.body.dataset.view = view;
   el('map').setAttribute('aria-label', view === 'all-fields' ? 'Map of all vineyard fields' : 'Map of the selected vineyard field');
@@ -551,7 +538,7 @@ async function loadScene(): Promise<void> {
     measurements.setData(null);
     text('field-meta', 'Start the field service to load current boundaries.');
     farmViews.refreshOverview(); updateYieldFields([], null);
-    text('plan-summary', 'Visit points and routes are unavailable.'); text('target-count', '—');
+    text('target-count', '—');
   }
 }
 void loadScene();

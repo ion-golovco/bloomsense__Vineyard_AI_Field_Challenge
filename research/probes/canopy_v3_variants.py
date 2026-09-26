@@ -72,3 +72,7 @@ VARIANTS.update({
     "hyst_a4_c12": replace(D, grow_a=-4, grow_dn=10, grow_core_m=0.12),
     "hyst_a3_c08": replace(D, grow_a=-3, grow_dn=10, grow_core_m=0.08),
 })
+VARIANTS.update({  # V08-04: grassed rows whose flanks are green too fail row_value 1.2 by a hair (1.0-1.19)
+    "e90_rv11": replace(E, row_value=1.1),
+    "e90_rv10": replace(E, row_value=1.0),
+})

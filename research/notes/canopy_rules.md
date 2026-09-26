@@ -352,3 +352,24 @@ rest (per-row cover median 0.84 on the frozen rows, 4 of 55 under 0.6). The loss
 (r007_c004, r008_c004): young yellow-green vines stand in grass, some lattice axes run on grass between the vine lines
 (axis dropped 30 m2 on r008_c004), long pale grass strips pass the strip rule, and 34-80 m2 per tile of vine colour lies
 0.3-0.6 m beside the axes (415 m2 of block colour on r007_c004 lies over 0.6 m from any axis, mostly grass).
+
+**Two passes end to end (21:14, current plots.py).** `canopy_v3_twopass.py` runs `marcaj.predict` with the canopy re-run
+on the refit rows (the change in `data/generated/work/canopy_v3/predict_twopass.diff`); `canopy_v3_swap.py` puts the
+first-pass canopies of the same run back for the one-pass baseline on identical plots. `marcaj-judge`: one pass canopy
+0.851 (r006 IoU 0.805 / F1 0.908, r021 0.833 / 0.897), estimate 44.87; two passes 0.857 (r006 0.822 / 0.906, r021
+0.834 / 0.898), estimate 45.03. Row cover (own rows, `canopy_v3_evalpred.py`): central tiles unchanged (0.775 / 0.713 /
+0.777 / 0.713), V08-04 tiles 0.692 -> 0.705; not-a-row canopy 7.3 -> 6.2 m2. Predict 257 -> 424 s wall (4.1 GB peak).
+
+**V08-04 axes (`canopy_v3_v0804axes.py`).** Of the block's 6022 m of axes, `row_value` 1.2 drops 279 m and nothing else
+drops more than 3 m. The dropped axes are green in the tube (share 0.34-0.94) but their flanks are grass, so the value
+contrast is 0.93-1.19: rows of the grassed strip (r007_c004, r008_c004/c005) and 6 of 16 axes on r009_c005 by the east
+border, which is what the user saw. On the organizer, central and V08-04 tiles (`canopy_v3_quick2.py`): `row_value` 1.1
+keeps the judge (0.8563) and the central cover, lifts V08-04 tile cover 0.705 -> 0.720 (r007_c004 0.568 -> 0.663,
+r009_c005 0.583 -> 0.640, +43 m2) and adds nothing on the not-a-row lines there; 1.0 reaches 0.733 but adds 7.7 m2 on
+the user's not-a-row lines. Sheet `removed_q2_rv11_vs_q2_now.jpg` (cyan = added): mostly young vines on grassed rows.
+Whole site (`canopy_v3_trials.py e90_rv11`, frozen v4 rows): judge 0.8563 unchanged, +212 pieces / 246 m2, gap
+vines-present flagged 30 -> 29 of 77, real gaps kept 49 of 68, planting vines-present 22 -> 18 of 38 but planting
+real 7 -> 5 of 7, not-a-row canopy 13.9 -> 20.7 m2. Sheet `removed_e90_rv11_vs_e90.jpg`: the largest additions are
+grass and weed strips on verge and meadow rows (r035_c025 8.8 m2, r036_c025 9.0 m2, r009_c005 4.4 m2, r014_c004,
+r037_c026) — the false canopies on grassy edges the user complained about. `row_value` stays 1.2. The rest of V08-04's
+loss is the plots' lattice running between the young vine lines of the grassed strip (a plots.py matter).

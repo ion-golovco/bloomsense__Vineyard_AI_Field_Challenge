@@ -26,10 +26,12 @@
         <span class="nav-foot">AGROCONTROL · BLOOMSENSE</span>
       </aside>
 
+      <div class="role-switch" role="group" aria-label="View the app as"><span aria-hidden="true">View as</span><button type="button" data-role="inspector" aria-pressed="true">Inspector</button><button type="button" data-role="farmer" aria-pressed="false">Farmer</button></div>
+
       <p id="status" class="scene-banner" role="status" aria-live="polite">Loading the current field scene…</p>
 
       <section class="field-control floating" aria-labelledby="field-heading">
-        <div class="field-label"><div class="role-switch" role="group" aria-label="Who is using the app"><button type="button" data-role="inspector" aria-pressed="true">Inspector</button><button type="button" data-role="farmer" aria-pressed="false">Farmer</button></div><span class="section-kicker">VINEYARD / INSPECTION</span><h1 id="field-heading">Choose a field</h1></div>
+        <div class="field-label"><span class="section-kicker">VINEYARD / INSPECTION</span><h1 id="field-heading">Choose a field</h1></div>
         <div class="field-input-row">
           <label class="sr-only" for="field-select">Field</label>
           <select id="field-select" disabled><option>Loading fields…</option></select>
@@ -39,59 +41,65 @@
       </section>
 
       <section class="impact floating" aria-labelledby="impact-heading">
-        <div class="impact-head"><span class="section-kicker" id="impact-heading">INSPECTION IMPACT</span><span id="impact-state" class="state-badge">PENDING</span></div>
-        <div class="money-row"><div><span>Estimated labour saved</span><strong id="money-saved" aria-live="polite">—</strong></div><span class="trend" aria-hidden="true">↘</span></div>
+        <div class="impact-head"><span class="section-kicker" id="impact-heading">WHAT YOU SAVE</span><span id="impact-state" class="state-badge">ESTIMATE</span></div>
+        <div class="money-row"><div><span>Walking time saved</span><strong id="time-saved" aria-live="polite">—</strong></div><span class="trend" aria-hidden="true">↘</span></div>
         <div class="impact-grid">
-          <div><span>Time saved</span><strong id="time-saved" aria-live="polite">—</strong></div>
-          <div><span>Field route</span><strong id="route-distance">—</strong></div>
+          <div><span>Planned route</span><strong id="route-distance">—</strong></div>
+          <div><span>Walking every row</span><strong id="rows-distance">—</strong></div>
+          <div class="impact-wide"><span id="points-state-label">Visit points</span><strong id="points-state">—</strong></div>
         </div>
-        <p id="impact-detail">Waiting for a route assigned to this field.</p>
+        <p id="impact-detail">Plan a route to see the time it saves.</p>
         <details class="assumptions" id="assumptions">
-          <summary>Calculate with your costs <span aria-hidden="true">⌄</span></summary>
+          <summary>Walking speed and labour cost <span aria-hidden="true">⌄</span></summary>
           <div class="assumptions-body">
-            <label>Usual inspection <span>minutes</span><input id="usual-minutes" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 120" /></label>
-            <label>Labour cost <span>MDL / hour</span><input id="hourly-cost" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 90" /></label>
             <label>Walking speed <span>km / hour</span><input id="walking-speed" type="number" inputmode="decimal" min="0.1" step="0.1" value="4" /></label>
-            <label>Time at each stop <span>minutes</span><input id="stop-minutes" type="number" inputmode="decimal" min="0" step="1" value="3" /></label>
-            <p>Estimate = your usual time for this field − planned walking and stop time. Labour value uses your hourly cost. Route validity and coverage are separate checks.</p>
+            <label>Labour cost <span>MDL / hour</span><input id="hourly-cost" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 90" /></label>
+            <p id="money-saved">Add a labour cost to see the time saved in MDL.</p>
+            <p>Estimate: walking the planned route against walking every row once, at the same speed. Time at each stop is the same both ways and left out.</p>
           </div>
         </details>
       </section>
 
       <section class="plan floating" id="plan-panel" tabindex="-1" aria-labelledby="plan-title">
-        <div class="panel-title"><div><span class="section-kicker">FIELD PLAN</span><h2 id="plan-title">Where to inspect</h2></div><span id="target-count" class="step-count">—</span></div>
+        <div class="panel-title"><div><span class="section-kicker">FIELD PLAN</span><h2 id="plan-title">Plan your walk</h2></div></div>
+        <div class="planner-slot" data-planner-slot="per-field">
+          <div class="route-planner" id="route-planner" role="group" aria-labelledby="planner-title">
+            <strong id="planner-title" class="planner-title">Route through this field's points</strong>
+            <div class="planner-steps">
+              <button id="pick-start" class="planner-step" type="button" aria-pressed="false"><span class="point-badge start" aria-hidden="true">S</span><strong>Start</strong><small id="start-label">Official START</small></button>
+              <button id="pick-end" class="planner-step" type="button" aria-pressed="false"><span class="point-badge end" aria-hidden="true">E</span><strong>End</strong><small id="end-label">Back to start</small></button>
+              <button id="plan-route" class="planner-step planner-go" type="button"><span class="point-badge go" aria-hidden="true">↗</span><strong id="plan-text">Plan route</strong><small id="plan-label">Not planned</small></button>
+            </div>
+            <label id="missing-toggle" class="missing-toggle" hidden><input id="farmer-missing" type="checkbox" /> Also visit missing canopy</label>
+            <p id="planner-status" class="planner-status" role="status" aria-live="polite"></p>
+            <div class="planner-links"><button id="reset-points" type="button" hidden>Reset start and end</button><button id="download-route" type="button" hidden>Download route.geojson</button></div>
+          </div>
+        </div>
         <div id="field-score" class="field-score" aria-live="polite" hidden>
           <div class="score-head"><span>Farmer score</span><strong id="score-now">—</strong><small id="score-model"></small></div>
           <p id="score-detail"></p>
           <p id="score-error" class="score-error"></p>
         </div>
-        <p id="plan-summary" class="panel-lead">Loading visit points…</p>
-        <div class="plan-tabs" role="group" aria-label="Plan views">
-          <button id="visits-tab" class="selected" type="button" data-panel="stops" aria-pressed="true">Visit points</button>
-          <button type="button" data-panel="evidence" aria-pressed="false">Evidence</button>
-          <button type="button" data-panel="field-measure" aria-pressed="false">Measurements</button>
+        <section id="field-measure-panel" class="plan-section" aria-labelledby="field-measure-title">
+          <h3 id="field-measure-title" class="plan-section-title">Field measurements</h3>
+          <div id="field-measure-card"><p class="measure-empty">Loading measurements…</p></div>
+        </section>
+        <div class="points-slot" data-points-slot="per-field">
+          <details class="plan-details" id="points-details" open>
+            <summary><span>Points to visit</span><span id="target-count" class="step-count">—</span><span class="measure-chevron" aria-hidden="true">⌄</span></summary>
+            <div id="stop-list" class="stop-list"></div>
+          </details>
         </div>
-        <div id="stops-panel">
-          <label id="missing-toggle" class="missing-toggle" hidden><input id="farmer-missing" type="checkbox" /> Include missing canopy</label>
-          <div id="stop-list" class="stop-list"></div>
-          <div class="route-planner" role="group" aria-labelledby="planner-title">
-            <div class="planner-head"><strong id="planner-title">Plan a walk</strong><label class="route-cutoff">Covers <select id="route-scope"><option value="field">This field</option><option value="site">Whole farm</option></select></label></div>
-            <div class="planner-point"><span class="point-badge start" aria-hidden="true">S</span><span><small>Start</small><strong id="start-label">Organizer START</strong></span><button id="pick-start" type="button" aria-pressed="false" aria-describedby="start-label">Set on map</button></div>
-            <div class="planner-point"><span class="point-badge end" aria-hidden="true">E</span><span><small>End</small><strong id="end-label">Back to the start</strong></span><button id="pick-end" type="button" aria-pressed="false" aria-describedby="end-label">Set on map</button></div>
-            <div class="planner-actions"><label><input id="route-hops" type="checkbox" checked /> Step across rows at gaps</label><button id="reset-points" type="button">Reset</button><button id="plan-route" class="primary-button" type="button">Plan route</button></div>
-            <p id="planner-status" class="planner-status" role="status" aria-live="polite"></p>
-            <button id="download-route" class="secondary-button" type="button" hidden>Download route.geojson</button>
+        <details class="plan-details" id="evidence-details">
+          <summary><span>Evidence</span><span class="measure-chevron" aria-hidden="true">⌄</span></summary>
+          <div id="evidence-panel">
+            <div class="evidence-state"><strong>Insufficient evidence</strong><p>A visit recommendation needs dated, comparable satellite observations and previous field notes.</p></div>
+            <div class="evidence-item"><span>NDVI / NDMI</span><strong id="evidence-satellite">Not available</strong></div>
+            <div class="evidence-item"><span>Cadastru</span><strong id="evidence-cadastre">Not available</strong></div>
+            <div class="evidence-item"><span>Prior notes</span><strong>Not available</strong></div>
+            <div class="evidence-item"><span>Treatment advice</span><strong>Needs field confirmation</strong></div>
           </div>
-          <div class="plan-action"><span id="route-status">Route pending</span><label class="route-cutoff" title="Minimum visit-point confidence">Confidence <select id="route-confidence"><option value="">All</option><option value="0.5">≥ 0.5</option><option value="0.7">≥ 0.7</option></select></label><button id="route-toggle" type="button" aria-pressed="true">Show route <span aria-hidden="true">↗</span></button></div>
-        </div>
-        <div id="evidence-panel" hidden>
-          <div class="evidence-state"><strong>Insufficient evidence</strong><p>A visit recommendation needs dated, comparable satellite observations and previous field notes.</p></div>
-          <div class="evidence-item"><span>NDVI / NDMI</span><strong id="evidence-satellite">Not available</strong></div>
-          <div class="evidence-item"><span>Cadastru</span><strong id="evidence-cadastre">Not available</strong></div>
-          <div class="evidence-item"><span>Prior notes</span><strong>Not available</strong></div>
-          <div class="evidence-item"><span>Treatment advice</span><strong>Needs field confirmation</strong></div>
-        </div>
-        <div id="field-measure-panel" hidden><div id="field-measure-card"><p class="measure-empty">Loading measurements…</p></div></div>
+        </details>
       </section>
 
       <section class="measure-site floating" id="measure-site" aria-labelledby="measure-site-title" hidden>
@@ -125,8 +133,10 @@
       <section class="overview floating" id="overview-panel" aria-labelledby="overview-title" hidden>
         <span class="section-kicker">FARM OVERVIEW</span>
         <h1 id="overview-title" tabindex="-1">All fields</h1>
-        <p>Choose a field on the map or in the list to open its inspection plan.</p>
+        <div class="planner-slot" data-planner-slot="all-fields"></div>
         <div class="overview-stats"><div><strong id="overview-count">—</strong><span>Fields</span></div><div><strong id="overview-points">—</strong><span>Visit points</span></div></div>
+        <div class="points-slot" data-points-slot="all-fields"></div>
+        <p>Choose a field on the map or in the list to open its plan.</p>
         <label class="sr-only" for="field-search">Search fields</label>
         <input id="field-search" type="search" placeholder="Search fields…" />
         <div id="field-list" class="field-list"></div>

@@ -25,6 +25,8 @@ KEYS = ("min_confidence", "length_m", "targets", "visited", "over_budget", "unre
 
 def world() -> tuple[list[dict], list[dict]]:
     features, name = solver.planning_features(load_projected_scene())
+    if os.environ.get("ROUTE_STRIP_OBSTACLES"):  # as a Marcaj export: buildings then come from the obstacles file
+        features = [f for f in features if f["properties"].get("label") != "obstacle"]
     targets = solver.route_target_features(features) + solver.poi_targets(POI)
     print(f"world {name} of {scene_path()}, POIs {POI}: {len(features)} features, {len(targets)} targets", flush=True)
     return features, targets
@@ -97,6 +99,7 @@ def request() -> None:
     robust budget. Then the controls that must fail: the site route plus an outside spur to 3% scores 0, and
     marcaj-export (`export._write_route`) refuses to write it."""
     import numpy as np
+    import shapely
     from shapely.geometry import LineString, Point
     from marcaj import export
     from marcaj.routing import _geometries, check_route, check_spaces
@@ -110,6 +113,9 @@ def request() -> None:
     cases = {"site closed": (None, None, None), "site open start -> far lane": (None, far, None),
              f"field {field}": (None, None, {i for i, t in enumerate(targets) if t["vineyard_id"] == field}),
              "waste only, from far lane": (far, None, {i for i, t in enumerate(targets) if t["label"] == "waste"})}
+    # the plan straight into the API's in-memory store, not the disk cache (its newest 3 files are the API's plans)
+    solver._PLANS[solver._plan_key(token, targets, solver.HOP_PENALTY_M, None)] = solver.plan(features, targets, solver.HOP_PENALTY_M)
+    houses = shapely.union_all(solver._buildings(features))
     site_line = None
     for name, (a, b, include) in cases.items():
         started = time.perf_counter()
@@ -118,8 +124,21 @@ def request() -> None:
         print(f"{name}: {line.length:.0f} m, {report['visited']}/{len(rows)} visited, {report['robust_outside_share']:.2%} robust / "
               f"{report['outside_share']:.2%} plain, start/end gap {report['start_gap_m']:.2f}/{report['end_gap_m']:.2f} m, {report['hops']} hops, "
               f"legal {report['legal']}, closed {report['closed']}, {time.perf_counter() - started:.1f} s -> {'PASS' if ok else 'FAIL'}", flush=True)
-        assert ok, name
+        crossed = line.intersection(houses).length
+        print(f"  crosses buildings for {crossed:.2f} m (must be 0)")
+        assert ok and crossed == 0, name
         site_line = site_line or line
+    _refusal(features, targets, site_line)
+
+
+def _refusal(features: list[dict], targets: list[dict], site_line) -> None:
+    """Controls that must fail: the site route plus an outside spur to 3%, and the site route cut short so it ends
+    more than 5 m from START, both score 0, and marcaj-export (`export._write_route`) refuses to write either."""
+    import numpy as np
+    from shapely.geometry import LineString, Point
+    from marcaj import export
+    from marcaj.routing import _geometries, check_route, check_spaces
+    start = _geometries(features, "start")[0]
     spaces = check_spaces(features)
     reach = 0.015 * site_line.length / 0.97
     for angle in np.linspace(0, 2 * np.pi, 72, endpoint=False):
@@ -127,21 +146,33 @@ def request() -> None:
         if LineString([start, tip]).difference(spaces["passable"]).length > 0.99 * reach - 1:
             break
     coords = list(site_line.coords)
-    spur = LineString(coords[:1] + [tip.coords[0], coords[0]] + coords[1:])
-    report = check_route(spur, features, [t["point"] for t in targets], spaces)
-    print(f"control, site route + {2 * reach:.0f} m outside spur: {report['outside_share']:.2%} outside, scores {report['scores']}, legal {report['legal']} (must be False)")
-    assert report["outside_share"] > 0.02 and not report["scores"] and not report["legal"]
-    fake = solver._route_feature(None, "", spur, [], report | {"robust_outside_share": 0.0, "robust_outside_m": 0.0, "budget": solver.OUTSIDE_BUDGET,
-                                                                "hops": 0, "hop_m": 0.0, "open": False})
-    real, export.routes_by_confidence = export.routes_by_confidence, lambda *args, **kwargs: [(fake, spur, [], report)]
-    try:
-        export._write_route({"features": features}, OUT / "refusal", None, None, solver.OUTSIDE_BUDGET, OUT / "refusal" / "routes.geojson", None)
-        raise AssertionError("marcaj-export wrote a route that scores 0")
-    except ValueError as error:
-        print(f"control, marcaj-export on that route: refused ({str(error)[:60]}...) (must refuse)")
-    finally:
-        export.routes_by_confidence = real
-    assert not (OUT / "refusal" / "route.geojson").exists()
+    cut = next(k for k in range(len(coords) - 1, 0, -1) if Point(coords[k]).distance(start) > 50)
+    cases = {f"site route + {2 * reach:.0f} m outside spur": LineString(coords[:1] + [tip.coords[0], coords[0]] + coords[1:]),
+             "site route cut short, ends > 50 m from START": LineString(coords[:cut + 1])}
+    (OUT / "refusal").mkdir(exist_ok=True)
+    for name, bad in cases.items():
+        report = check_route(bad, features, [t["point"] for t in targets], spaces)
+        print(f"control, {name}: {report['outside_share']:.2%} outside, end gap {report['end_gap_m']:.1f} m, scores {report['scores']}, "
+              f"legal {report['legal']}, closed {report['closed']} (must not score)")
+        assert not (report["scores"] and report["closed"])  # the zero-score rule: > 2% outside, or no return within 5 m
+        fake = solver._route_feature(None, "", bad, [], report | {"robust_outside_share": 0.0, "robust_outside_m": 0.0, "budget": solver.OUTSIDE_BUDGET,
+                                                                   "hops": 0, "hop_m": 0.0, "open": False})
+        real, export.routes_by_confidence = export.routes_by_confidence, lambda *args, **kwargs: [(fake, bad, [], report)]
+        try:
+            export._write_route({"features": features}, OUT / "refusal", None, None, solver.OUTSIDE_BUDGET, OUT / "refusal" / "routes.geojson", None)
+            raise AssertionError("marcaj-export wrote a route that scores 0")
+        except ValueError as error:
+            print(f"  marcaj-export: refused ({str(error)[:60]}...) (must refuse)")
+        finally:
+            export.routes_by_confidence = real
+        assert not (OUT / "refusal" / "route.geojson").exists()
+
+
+def refusal() -> None:
+    """`_refusal` on the site route of a route.geojson or routes file (argv[2]; its first feature), without a plan."""
+    from shapely.geometry import shape
+    features, targets = world()
+    _refusal(features, targets, shape(json.loads(Path(sys.argv[2]).read_text())["features"][0]["geometry"]))
 
 
 def verify() -> None:
@@ -181,5 +212,47 @@ def verify() -> None:
     assert not failures
 
 
+def buildings() -> None:
+    """The building fallback of `route.build_grid`: on the world with its obstacle features stripped (as a Marcaj
+    export has none) the grid must equal the full world's (buildings come from OBSTACLES_PATH), and must not without
+    the fallback (the control: building cells walkable). Then no hop corridor and no line of the routes file
+    (argv[2], if given) may cross a building."""
+    import numpy as np
+    import shapely
+    from shapely.geometry import shape
+    features, targets = world()
+    stripped = [f for f in features if f["properties"].get("label") != "obstacle"]
+    houses = solver._buildings(features)
+    print(f"{len(features) - len(stripped)} obstacle features stripped, {len(houses)} buildings; fallback file gives {len(solver._buildings(stripped))}")
+    full = solver.build_grid(features, None, solver.HOP_PENALTY_M)
+    fallback = solver.build_grid(stripped, None, solver.HOP_PENALTY_M)
+    same = np.array_equal(full.node, fallback.node) and np.array_equal(full.cost, fallback.cost) and full.hop_tier == fallback.hop_tier
+    from rasterio.features import rasterize
+    cells = rasterize(((h, 1) for h in houses), out_shape=full.node.shape, transform=full.transform, all_touched=True).astype(bool)
+    print(f"stripped world with the fallback: grid identical to the full world's: {same} (must be True); "
+          f"walkable building cells {int((fallback.node[cells] >= 0).sum())} of {int(cells.sum())} (only cells inside lanes may be)")
+    assert same
+    corridors = shapely.linestrings(np.stack([full.xy(np.array([a for a, _ in full.hop_tier])), full.xy(np.array([b for _, b in full.hop_tier]))], axis=1))
+    walkable = int((fallback.node[cells] >= 0).sum())
+    touching = int(shapely.intersects(shapely.buffer(corridors, solver.HOP_WIDTH_M / 2, cap_style="flat"), shapely.union_all(houses)).sum())
+    print(f"hop corridors touching a building: {touching} of {len(full.hop_tier)} (must be 0)")
+    del full, fallback
+    default = solver._buildings.__defaults__
+    solver._buildings.__defaults__ = (OUT / "no_such_obstacles.geojson",)
+    try:
+        bare = solver.build_grid(stripped, None, None)
+    finally:
+        solver._buildings.__defaults__ = default
+    open_cells = int((bare.node[cells] >= 0).sum())
+    print(f"control, stripped world without the fallback: walkable building cells {open_cells} of {int(cells.sum())} (must be more)")
+    assert open_cells > walkable
+    if len(sys.argv) > 2:
+        union = shapely.union_all(houses)
+        for f in json.loads(Path(sys.argv[2]).read_text())["features"]:
+            crossed = shape(f["geometry"]).intersection(union).length
+            assert crossed == 0, (f["properties"]["scope"], f["properties"]["vineyard_id"], crossed)
+        print(f"{Path(sys.argv[2]).name}: no route crosses a building")
+
+
 if __name__ == "__main__":
-    {"weights": weights, "blocks": blocks, "request": request, "verify": verify}[sys.argv[1]]()
+    {"weights": weights, "blocks": blocks, "request": request, "verify": verify, "buildings": buildings, "refusal": refusal}[sys.argv[1]]()
