@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from waste_south import W, sheet  # noqa: E402
+from shapely.geometry import Point  # noqa: E402
+from waste_south import W, sheet, south_interrows  # noqa: E402
 
 from marcaj.tiles import PIXEL_M  # noqa: E402
 
@@ -17,16 +18,22 @@ LEFT0, TOP0, TILE_M = 628992.0, 5221222.4, 51.2
 
 def main() -> None:
     verdicts = json.loads((W / "south_verdicts.json").read_text())
+    interrows = south_interrows()
     items = []
     for v in verdicts:
         if v["verdict"] not in ("likely", "unsure"):
             continue
         r, c = int(v["tile"][1:4]), int(v["tile"][6:9])
+        point = Point(LEFT0 + TILE_M * c + v["x"] * PIXEL_M, TOP0 - TILE_M * r - v["y"] * PIXEL_M)
+        zones = interrows.get(f"siret3_{v['tile']}.tif", [])
+        gap = min((polygon.distance(point) for polygon, _ in zones), default=99.0)
+        block = min(zones, key=lambda z: z[0].distance(point))[1] if zones else ""
         items.append({
             "tile": f"siret3_{v['tile']}.tif", "x_px": v["x"], "y_px": v["y"],
             "easting": round(LEFT0 + TILE_M * c + v["x"] * PIXEL_M, 2), "northing": round(TOP0 - TILE_M * r - v["y"] * PIXEL_M, 2),
             "w_m": round(v["w_px"] * PIXEL_M, 2), "h_m": round(v["h_px"] * PIXEL_M, 2),
             "verdict": v["verdict"], "reason": v["reason"],
+            "interrow_m": round(gap, 2), "vineyard_id": block,  # 0 = inside a predicted inter-row
         })
     items.sort(key=lambda i: (i["tile"], i["y_px"]))
     (W / "checklist_south.json").write_text(json.dumps(items, indent=1, ensure_ascii=False))

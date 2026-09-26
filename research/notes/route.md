@@ -6,10 +6,12 @@
 
 **Planning space.** The route plans on passages plus the scene's inter-rows eroded by 0.3 m, minus forbidden zones (`robust_space`). The organizers' inter-rows may be tighter than ours. Planning on our own inter-rows put 0.97% of the site route outside them, but 1.89% outside the eroded ones, because every lane entry and exit adds its 0.3 m.
 
-**Grid.** 0.5 m cells, 1.4 M nodes on the site, built in 2–5 s.
-- Each cell's passable cover comes from a raster 3× finer, so a 0.3 m sliver at a lane end still counts as outside.
+**Grid.** 0.5 m cells, 1.32 M nodes on the site, built in 4–5 s.
+- A raster 3× finer gives each cell's passable cover. It also gives each step's outside share, sampled at 8 points along the step.
+  - The cell-average cover used before missed steps that clip an eroded lane's corner: it put a tour's outside metres at 48 m against 87 m exact.
+  - Sampled along the steps, the estimate is 86 m. A planner that optimises against the samples still finds their gaps (63 m sampled against 78 m exact), which is why every leg the tour uses is also measured exactly (see "Choosing the targets").
 - Walkable cells: passable space, plus a 12 m outside corridor around it.
-- The corridor excludes forbidden zones (all touched), row strips (axis ± 0.3 m, the trellis) and canopies. It lets the route reach blocks behind a bare headland.
+- The corridor excludes forbidden zones (all touched), row strips (axis ± 0.3 m, the trellis), canopies, and the imagery's no-data margin. The margin mask uses the 0.2 m mosaic, R + G + B > 30 with holes filled. It lets the route reach blocks behind a bare headland.
 - A step costs 1 per metre at a lane centre and up to 2 within 0.75 m of the passable edge, so the route keeps to lane centres. Outside passable space it costs 6 per metre. A canopy that overlaps passable space also costs 6 but stays walkable.
 - Steps go in 16 directions (length error at most 2.7%). No step cuts past a blocked cell, so the route cannot slip through a 1-cell row strip.
 
@@ -19,65 +21,58 @@
 - Each target attaches to the cheapest walkable cell within 1.75 m of it, one per local component, up to 3. A row gap usually gets one cell in each neighbouring lane.
 - With the 0.2 m simplification the line stays within 2 m. The status in `route_targets.csv` is always measured on the final line.
 - Waste boxes are targeted at their centroid.
-- A gap POI's `gap_start` and `gap_end` get an out-and-back walk along the same lane when the route does not already pass them. The organizers' point may sit anywhere in the gap. On the site, both ends are within 2 m on 130 of 130 visited gaps (56 walks).
+- A gap POI's `gap_start` and `gap_end` get an out-and-back walk along the lane when the route does not already pass them, since the organizers' point may sit anywhere in the gap. A walk is only added if it stays entirely inside the planning space; otherwise it is skipped. The earlier walks added 23 m of outside metres that nothing budgeted. Both ends are now within 2 m on 120 of 125 visited gaps.
 
-**Matrices.** One scipy Dijkstra per candidate stop, 0.3 s each on 1.4 M nodes (it holds the GIL, so threads don't help). Each run gives cost, metres and outside metres to every stop: the path tree is traced for all stops at once, and only its used part is kept, so legs are rebuilt without rerunning Dijkstra.
+**Matrices.** One scipy Dijkstra per candidate stop, 0.3 s each on 1.3 M nodes (it holds the GIL, so threads don't help). Each run gives cost, metres and outside metres to every stop: the path tree is traced for all stops at once, and only its used part is kept, so legs are rebuilt without rerunning Dijkstra.
 
-**Tour.**
+**Tour.** A tour for a fixed set of targets:
 1. Nearest neighbour, then 2-opt and Or-opt (runs of 1–3 stops, both orientations) on the group-minimum costs.
 2. A Viterbi pass re-picks each target's candidate for the current order.
 3. 2-opt and Or-opt again on the chosen stops, repeated until the cost stops falling.
 
-**Budget.** While the tour is more than `OUTSIDE_BUDGET` = 1.2% outside the eroded space, the solver drops whatever saves the most outside metres per target. That is either one stop, or a whole run of consecutive stops behind the same outside access; dropping one stop of such a block saves nothing. Dropped targets that still fit are then put back, cheapest access first.
+**Choosing the targets (`route`), under `OUTSIDE_BUDGET` = 1.2% outside the eroded space.**
+- **Build up from START (`build=True`).** `_add` inserts targets at their cheapest place while the budget holds.
+  - Targets that add no outside metres go first.
+  - Then the one with the most targets per outside metre goes next. The count includes the pool targets its insertion makes free: the other gaps of a lane behind a headland share that lane's access.
+- **Drop step.** It is used when a starting tour is over budget. It drops the stop, or run of stops behind one outside access, that saves the most outside metres per target. If no removal saves anything, it rebuilds from START.
+- **Exact legs.** An unmeasured leg's raster outside metres are scaled by 1.3. After each round, every leg of the tour is measured exactly against the eroded space and kept on the plan. A tour that turns out over budget is trimmed on the exact numbers, for at most 8 rounds.
 
-The raster undercounts exact outside metres (up to 2.7× on the site, at lane ends). So the simplified line is measured exactly against the eroded space. If it is over budget, the raster is rescaled by the measured ratio and the solver budgets again. `check_route` then reports against the scene's own passable space.
+**Across cutoffs (`_best_routes`).** Each POI confidence cutoff is built on its own. Then it is warm-started from every other cutoff's tour, and it is also offered that cutoff's line unchanged. The best route is kept, ranked by fitting the budget, then most targets visited, then shortest. A route over a subset of targets is a legal route for the full set, so the all-POI route now visits at least as many targets as any cutoff's route.
 
-**Validator fix (`routing.py`).** `check_route` used `route.difference(space).length`. An overlay dissolves a line that retraces itself, so an out-and-back spur outside counted only once. That undercounts exactly the spurs this solver makes. It now sums per segment (`_length_in`), and it also reports `forbidden_m` and `canopy_m`. It takes an explicit `targets` list, because the POIs are not scene features.
+**Per-field routes.** One closed route START → that field's targets → START for each field (`vineyard_id`) and cutoff. They reuse the same plan and the same choice procedure, which takes about 70 s for all 23 fields.
+
+**Validator fix (`routing.py`).** `check_route` used `route.difference(space).length`. An overlay dissolves a line that retraces itself, so an out-and-back spur outside counted only once. That undercounts exactly the spurs this solver makes. It now sums per segment (`_length_in`), and it also reports `forbidden_m` and `canopy_m`. It takes an explicit `targets` list, because the POIs are not scene features, and optional `spaces` (`check_spaces`), so checking 71 routes computes the unions only once.
 
 ## Controls (`route_probe.py controls`; all fail as they must)
 
-1. A straight line START → an old waste candidate 28.7 m inside P25 → START: 79.4% outside, `legal=False`.
+1. A straight line START → an old waste candidate 28.7 m inside P25 → START: 78.0% outside, `legal=False`.
 2. A retraced 40 m spur: 40.4 m outside per segment, against 20.2 m from the old whole-line overlay.
 3. A route that ends 8 m from START: `closed=False`.
 
 ## Results
 
-**Site prediction.** This is `predictions.geojson`, relabelled `source: dev` for development only. Targets are 191 challenge POIs plus the 2 in-block waste boxes from `work/waste/waste.geojson`, 193 in total. Planning takes 2.0–3.1 min: 400 stops, the time varies with machine load, and the peak is 2.9 GB. Each cutoff then takes 13–22 s.
+**Site prediction** (final prediction, 26 September ~12:00). `predictions.geojson` is relabelled `source: dev` for development only. Targets: 177 challenge POIs plus the 2 in-block waste boxes, 179 in total. `route_probe.py site` takes 195 s: planning 120 s (374 stops) plus 3 site routes and 68 field routes. Peak memory 3.4 GB.
 
-| POI confidence | length | visited / targets | outside, scene | outside, eroded 0.3 m | if inter-rows stopped 1 m short of passages |
+| POI confidence | before: length, visited | after: length, visited / targets | outside, scene | outside, eroded 0.3 m | if inter-rows stopped 1 m short |
 |---|---|---|---|---|---|
-| all (official) | 9,119 m | 132 / 193 | 0.61% | 1.14% | 1.92% |
-| ≥ 0.5 | 8,616 m | 118 / 180 | 0.63% | 1.14% | 1.87% |
-| ≥ 0.7 | 8,435 m | 100 / 142 | 0.67% | 1.17% | 1.85% |
+| all (official) | 8,153 m, 97 | **9,533 m, 127 / 179** | 0.62% | 1.15% | 1.93% |
+| ≥ 0.5 | 8,603 m, 111 | **9,430 m, 122 / 172** | 0.60% | 1.14% | 1.92% |
+| ≥ 0.7 | 7,901 m, 87 | **9,430 m, 93 / 132** | 0.60% | 1.14% | 1.92% |
 
-- All three routes are closed (start and end gaps of 0 m) and legal, with 0 m through forbidden zones and 0 m through canopies. Both waste boxes are visited, at 0.03 m and 0.08 m.
-- The 61 targets not visited are all over the outside budget. They sit in blocks whose lanes end at a headland 5–8 m from any passage, or in dead-end lanes: P24 (11), P05, P12 (7 each), P06 (6), P10 and P22 (5 each). `route_targets.csv` gives each one's reason and the outside metres it would cost.
-- **Budget sweep** on the same targets, before re-insertion and the 1.75 m attachment, using the robust budget:
+- **Before:** the committed solver on the same targets. Its all-POI route visited fewer targets than the ≥ 0.5 route.
+- **After:** the all-POI route visits the most. The ≥ 0.7 cutoff took the ≥ 0.5 line as it is, because it visits more of its targets than the ≥ 0.7 route built on its own.
+- All routes are closed (gap 0 m) and legal, with 0 m forbidden and 0 m through canopies. Both waste boxes are visited.
+- **Unreachable:** 5 targets have "no walkable connection to START". Four are in P06 at the imagery edge, reachable before only across no-data, and one is in P32, enclosed. The other 47 unvisited targets are over the budget.
+- **Lower bound:** Held-Karp on plain grid metres gives 7,238 m, so the route is at most 31.7% above it. The ordering gap on the solver's own costs is at most 18.9%. Both bounds are loose.
 
-  | budget | visited | length | outside, scene | if inter-rows stopped 1 m short |
-  |---|---|---|---|---|
-  | 0.8% | 97 | 7,968 m | 0.23% | 1.37% |
-  | 1.0% | 108 | 8,181 m | 0.35% | 1.49% |
-  | 1.2% | 121 | 8,611 m | 0.54% | 1.72% |
-  | 1.6% | 141 | 9,952 m | 1.01% | 2.11% |
+**Field routes:** 68 routes (3 cutoffs, fewer where a cutoff leaves a field without targets) over 23 fields. All 68 are legal, closed and within the robust budget, and 28 of them visit every target of their field. Examples:
+- P01: 2,476 m, 20 of 20
+- P02: 1,082 m, 13 of 13
+- P03: 812 m, 10 of 10
 
-  1.2% is the largest budget that stays under 2% in the pessimistic case.
-- **Lower bound.** A Held-Karp bound on plain grid metres (outside metres free, no gap walks) is 6,677 m, so the route is at most 36.6% above it. On the solver's own costs, the tour is 9,913 against a bound of 8,260: an ordering gap of at most 20%. Both bounds are loose. The first lets the route walk freely through headlands and skips the 56 gap walks. The second relaxes each target to its nearest candidate for every pair.
-- **Component crossing.** The small passage component (2,137 m², SE) is 81 m from the big one, and no inter-row bridges them. The route reaches the lanes around it through the corridor. The two longest outside stretches of the official route are 13 m and 8 m (`site_zoom_outside0_13m.jpg` and `site_zoom_outside1_8m.jpg`). The 13 m stretch is a U-turn across the imagery's no-data edge at P05 (see the open items).
+**Organizer examples scene** (synthetic targets: 12 on reference row axes, 1 in a passage, 1 inside the forbidden village): the route is 1,980 m, 0.80% outside, closed, and visits 6 of 14 in 9 s. The forbidden box is unreachable ("77.0 m from passable space"). Ordering gap at most 0.5%.
 
-**Organizer examples scene** (`build_scene` of the examples ZIP). Targets: 12 synthetic points on reference row axes, 1 box in a passage, and 1 box 77 m inside the village's forbidden zone.
-
-- The route is 2,001 m, 0.98% outside the scene's passable space, closed, and visits 7 of 14 targets. Solve time 6.9 s.
-- The forbidden box is reported unreachable: "77.0 m from passable space, beyond the 12 m outside corridor".
-- 6 row points are over budget. Only the 2 example tiles carry inter-rows, so the rest of each vineyard is outside passable space there.
-- Held-Karp ordering gap 3.4%.
-
-**`marcaj-export` on the current `scene.json`** works end to end, in 17 s for all three cutoffs.
-- Its scored world is only the 2 reference tiles plus the organizer layers. The predicted inter-rows are excluded by `is_scored`, as they should be. So the all-POI route is 2,416 m, visits 8 of 191 targets, and is 1.12% outside passable space.
-- It wrote `route.geojson` with the organizers' `crs` member, `route_targets.csv`, `measurements.csv` and `routes.geojson` to `work/route/export_test/`.
-- It also reports 0.85 m through reference canopies. At 0.5 m cells, a step can clip a canopy corner. The brief rules this out, but the score does not count it.
-
-**Fixed after this run:** when outside metres could not be reduced by dropping any target, the solver reported the previous iteration's line. It now keeps and reports the current tour.
+**`marcaj-export` on the current `scene.json`** works end to end in 22 s. It wrote `route.geojson`, `route_targets.csv`, `measurements.csv` and 71 routes (3 site, 68 field) to `work/route/export_test/`. That scene's scored inter-rows are only the 2 reference tiles, so the all-POI route visits only 18 of 177, at 1.10% outside. It also reports 0.91 m through reference canopies: a 0.5 m step can clip a canopy corner. The brief rules this out, but the score does not count it.
 
 ## Sunday
 
@@ -91,20 +86,22 @@ uv run --frozen marcaj-export --output-dir .. --poi ../data/generated/work/poi/p
 
 - `route.geojson` is the all-POI route; export refuses it if it would score 0.
 - `route_targets.csv` lists every target as visited, over_budget, unreachable or missed, with its distance, the distances of its gap ends and the reason.
-- `data/generated/routes.geojson` holds one route per cutoff (all, ≥ 0.5, ≥ 0.7). Each carries `label` and `source` "route", `min_confidence`, `length_m`, `targets`, `visited`, `unreachable`, `over_budget`, `outside_share`, `robust_outside_share`, `start_gap_m`, `end_gap_m`, `legal` and `closed`. A cutoff whose route would score 0 is left out and reported.
+- `data/generated/routes.geojson` holds the 3 site routes (`scope` "site", `vineyard_id` "") and the per-field routes (`scope` "field"), for each cutoff (all, ≥ 0.5, ≥ 0.7).
+  - Each route carries `label` and `source` "route", `scope`, `vineyard_id`, `min_confidence`, `length_m`, `targets`, `visited`, `unreachable` (= targets − visited), `over_budget`, `outside_share`, `robust_outside_share`, `start_gap_m`, `end_gap_m`, `legal` and `closed`.
+  - A route that would score 0 is left out and reported.
 - Options: `--poi-confidence-over X`, `--outside-budget B` (default 0.012; the zero-score limit is 0.02) and `--routes PATH`.
-- Waste targets are the scene's scored `waste` boxes from the Marcaj export. Budget about 3–5 min for the whole export.
+- Waste targets are the scene's scored `waste` boxes from the Marcaj export. Budget about 3.5 min for the whole export on a full corrected scene.
 
 ## What the client needs (web/, api.py and scene.py are not mine)
 
-- Show the routes from `data/generated/routes.geojson`. It is in EPSG:32635, so transform it for display the way `scene._TO_DISPLAY` does. The slider picks `min_confidence`. Show `length_m` and `visited` / `targets`.
+- Show the routes from `data/generated/routes.geojson`. It is in EPSG:32635, so transform it for display the way `scene._TO_DISPLAY` does. The slider picks `min_confidence`, and a field's route is `scope` "field" with its `vineyard_id`. Show `length_m` and `visited` / `targets`.
 - Show target status from `route_targets.csv`, or by joining POI ids: visited, over budget and unreachable in different colours, with the reason on hover. The farmer should see why a gap is off the route, and the map should not draw a shortcut.
-- The official route is the `min_confidence: null` feature. It matches `route.geojson`.
+- The official route is the `scope: "site"`, `min_confidence: null` feature. It matches `route.geojson`.
 
 ## Open items and decisions
 
-- **Budget (the user's call).** 1.2% of the eroded space is the default. At 1.6% the route visits about 20 more targets, but the pessimistic stress case passes 2%.
+- **Budget (the user's call).** 1.2% of the eroded space is the default. The pessimistic stress case is at 1.93%, just under 2%. An earlier sweep found about 20 more targets at 1.6%, but that stress case then passed 2%.
+- **Gap ends.** 5 of the 125 visited gaps have an end more than 2 m from the route, because the walk to it would leave the planning space.
 - **Whether headland access counts.** Blocks behind a headland (P24, P12, P06 and others) cost outside metres for any team, the organizers' own route included. The rule does not say whether the hidden target list excludes targets that cannot be legally reached. Ask in Slack.
-- **No-data margins.** The corridor includes the black no-data margin inside the study area. Rows are clipped at the visible edge, so the route can U-turn across row ends we cannot see (the 13 m stretch at P05). The fix is to mask the corridor with the mosaic's valid pixels (`mosaic.load_mosaic`, RGB > 0).
-- **Tour quality.** The ordering gap is at most 20% on the site, which is not proven tight. An Or-opt move that also re-picks candidates, or a 3-opt, could gain a few percent of length (efficiency is 10 points, and needs 90% coverage first).
+- **Tour quality.** The ordering gap is at most 19% on the site, which is not proven tight. An Or-opt move that also re-picks candidates, or a 3-opt, could gain a few percent of length (efficiency is 10 points, and needs 90% coverage first).
 - **For rows.py.** 48% of inter-row strips have no passage at either end. Every lane that dead-ends against a headland costs outside metres. If the organizers' inter-rows run to the headland edge where ours stop short, carrying inter-row ends across a headland narrower than about 2 m would cut outside metres. That needs evidence from the reference; none of the reference tiles shows a real row end.

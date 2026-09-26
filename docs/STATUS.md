@@ -1,4 +1,4 @@
-# Status — Saturday 26 September 2026, ~03:30
+# Status — Saturday 26 September 2026, ~11:00
 
 Commits up to `050fa5d` hold the plumbing, plots, rows, canopy v1 and SAM probe. The plots, rows, canopy v2 and waste work of Saturday night is uncommitted in the working tree; its notes are in `research/notes/`.
 
@@ -12,8 +12,9 @@ Commits up to `050fa5d` hold the plumbing, plots, rows, canopy v1 and SAM probe.
 | Measurements, `route.geojson`, `measurements.csv` | Measured on the reference tiles: 2 blocks, 51 rows, 1,941.6 m of row, 536.2 m² of canopy, 4,064.4 m² of inter-row. The route checks enforce the zero-score rules |
 | Local judge | Passes all controls (see CLAUDE.md). It cannot score waste: both example tiles hold none, so waste is n/a |
 | Preprocessing (`mosaic`, `layers`) | 0.2 m mosaic in 11 s, plot variables in 17 s; measured against 49 hand-drawn outlines (RESEARCH.md) |
-| Plots, rows, inter-rows, canopy, waste (`plots`, `rows`, `canopy`, `waste`, `predict`) | 36 plots, 1,776 row, 1,727 inter-row, 13,279 canopy pieces and 29 waste boxes in 215 s (3.9 GB peak), with the U-Net filtering the canopy colour mask. Reference tiles: canopy **0.854** (IoU 0.821, F1 0.908; was 0.668; 0.855 with the rules alone), axis F1 0.980 / 0.962, inter-row F1 0.979 / 0.941, attributes 0.974, grouping 1.0, counts 0.890; **judge estimate 44.88 of 50 available points** (was 37.7; 44.99 with the rules alone). Plots against the 35 outlines: north F1@0.5 0.81, south 0.65 (were 0.59 / 0.47). Packs to 5 ZIPs, 311 tiles, 0 problems |
+| Plots, rows, inter-rows, canopy, waste (`plots`, `rows`, `canopy`, `canopy_net`, `waste`, `predict`) | 36 plots, 1,797 row, 1,750 inter-row, 13,611 canopy pieces and 2 inter-row waste boxes in 214 s. Reference tiles: canopy 0.854, axis F1 0.980 / 0.962, inter-row F1 0.979 / 0.941, attributes 0.974, grouping 1.0, counts 0.890; **judge estimate 44.88 of 50 available points** (was 37.7). Plots against the 35 outlines: north F1@0.5 0.81 / @0.75 0.60, south 0.65 / 0.35. **Upload ZIPs in `output/upload/`: 5 parts, 311 tiles, 0 problems (10:54)** |
 | Lab notebook | `research/lab.ipynb` executes headless. Click, draw, undo and judge regressions were exercised; the map renders with imagery, plots, reference and draw tools |
+| POIs, Sentinel, route (`poi`, `sentinel`, `route`) | 177 challenge POIs (gaps ≥ 5 m, missing planting); 3 clear Sentinel-2 scenes (24 Apr, 29 Apr, 4 May 2025), 6 low zones, 4 confirmed by the drone. Routes on the prediction, all legal and closed: all POIs 8.2 km, 97/179 visited; ≥ 0.5 8.6 km, 111/172; ≥ 0.7 7.9 km, 87/132 (the all-POI coverage is a known heuristic flaw being fixed). `/api/scene` carries POIs, Sentinel zones and the three routes |
 | Client app | `:8000` serves the real scene (organizer layers, reference tiles, predicted plots) with imagery. No tooling |
 | Sentinel-2 probe | 72 scenes. Vineyards show late green-up (−0.25 NDVI in early June) and late senescence. Details in RESEARCH.md |
 

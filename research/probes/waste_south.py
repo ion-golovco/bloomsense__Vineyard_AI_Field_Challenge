@@ -19,6 +19,7 @@ from rasterio.features import rasterize
 from rasterio.windows import Window
 from scipy import ndimage
 from shapely.geometry import box, shape
+from shapely.ops import unary_union
 
 from marcaj.tiles import DATA_DIR, PIXEL_M, REPO_ROOT, TILE_PX, load_tiles
 from marcaj.waste import BG_FACTOR, EIGHT, _coarse, _fine
@@ -199,6 +200,61 @@ if __name__ == "__main__":
             draw.text((900, 1010), name[7:-4], fill=(255, 0, 255))
             out.save(W / f"south_tile_{name[7:-4]}.jpg", quality=88)
         print(len(sys.argv[2:]) or len(interrows), "tile views")
+    elif sys.argv[1] == "quads":  # quads: every 1024 px quadrant with >= 3% inter-row at native resolution, outside the inter-rows halved
+        interrows = south_interrows()
+        paths = []
+        for name in sorted(interrows):
+            with rasterio.open(DATA_DIR / "tiles" / name) as source:
+                rgb, transform = source.read(), source.transform
+            inside = rasterize([p for p, _ in interrows[name]], out_shape=(TILE_PX, TILE_PX), transform=transform).astype(bool)
+            for qi in range(2):
+                for qj in range(2):
+                    win = (slice(qi * 1024, qi * 1024 + 1024), slice(qj * 1024, qj * 1024 + 1024))
+                    if inside[win].mean() < 0.03:
+                        continue
+                    image = np.moveaxis(rgb[:, win[0], win[1]], 0, -1).copy()
+                    image[~inside[win]] //= 2
+                    out = Image.fromarray(image)
+                    draw = ImageDraw.Draw(out)
+                    for k in range(0, 1024, 256):
+                        draw.line([(k, 0), (k, 1023)], fill=(0, 200, 255), width=1)
+                        draw.line([(0, k), (1023, k)], fill=(0, 200, 255), width=1)
+                        draw.text((k + 2, 2), str(qj * 1024 + k), fill=(0, 255, 255))
+                        draw.text((2, k + 2), str(qi * 1024 + k), fill=(0, 255, 255))
+                    draw.text((880, 1008), f"{name[7:-4]} q{qi}{qj}", fill=(255, 0, 255))
+                    path = W / f"south_quad_{name[7:-4]}_{qi}{qj}.jpg"
+                    out.save(path, quality=90)
+                    paths.append(path.name)
+        (W / "south_quads.txt").write_text("\n".join(paths))
+        print(len(paths), "quadrants")
+    elif sys.argv[1] == "strips":  # strips NAME TILE ...: the inter-row bounding box of each tile at 0.05 m/px, packed 1400 px wide
+        interrows = south_interrows()
+        crops = []
+        for tile in sys.argv[3:]:
+            name = f"siret3_{tile}.tif"
+            with rasterio.open(DATA_DIR / "tiles" / name) as source:
+                transform = source.transform
+                x0, y0, x1, y1 = unary_union([p for p, _ in interrows[name]]).bounds
+                c0, r0 = ~transform * (x0, y1)
+                c1, r1 = ~transform * (x1, y0)
+                c0, r0, c1, r1 = (int(max(0, min(TILE_PX, v))) for v in (c0 - 40, r0 - 40, c1 + 40, r1 + 40))
+                rgb = source.read(window=Window(c0, r0, c1 - c0, r1 - r0), out_shape=(3, (r1 - r0) // 2, (c1 - c0) // 2))
+            crop = Image.fromarray(np.moveaxis(rgb, 0, -1))
+            draw = ImageDraw.Draw(crop)
+            draw.text((3, 3), f"{tile} x{c0}-{c1} y{r0}-{r1}", fill=(255, 0, 255))
+            crops.append(crop)
+        x = y = row_h = 0
+        placed = []
+        for crop in crops:
+            if x + crop.width > 1400:
+                x, y, row_h = 0, y + row_h + 4, 0
+            placed.append((crop, x, y))
+            x, row_h = x + crop.width + 4, max(row_h, crop.height)
+        out = Image.new("RGB", (1400, y + row_h), (70, 70, 70))
+        for crop, px, py in placed:
+            out.paste(crop, (px, py))
+        out.save(W / f"south_strips_{sys.argv[2]}.jpg", quality=90)
+        print(W / f"south_strips_{sys.argv[2]}.jpg", out.size)
     elif sys.argv[1] == "zoom":  # zoom NAME TILE:X:Y[:SIZE_M] ...: native crops at 3x, SIZE_M default 3 m, into south_zoom_NAME.jpg
         crops = []
         for spec in sys.argv[3:]:

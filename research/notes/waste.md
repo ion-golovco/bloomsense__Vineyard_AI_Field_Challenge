@@ -3,64 +3,83 @@
 26 September 2026. Everything below was measured on the 311 tiles. The verdicts ("likely", "possible", "unsure", "not")
 are my own, from contact sheets and 5x zooms. No labelled Sireț3 waste exists, so no number here is an accuracy.
 
-## Current detector: waste inside vineyard blocks only (10:00)
+## Current detector: litter in the inter-rows only (10:20)
 
-The user saw 2–3 pieces of garbage in the four big vineyards by START, and decided that only waste inside vineyards
-counts. The rules also allow the surrounding zone. The four vineyards are the predicted blocks P03, P02, P16 and P07
-(`overview_start.jpg`, 600 m around START).
+The user decided "we only care inter-row". `waste.detect(tiles, predictions, data_dir, params)` keeps the same
+signature, but now keeps only boxes whose centre lies in a predicted `interrow_area`. Each box takes that inter-row's
+`vineyard_id`. The in-block headland boxes of the earlier version (P03 r018_c013, P07 r022_c013) drop out.
 
-**Method (`backend/src/marcaj/waste.py`).** Only pixels inside a predicted block and ≥ 0.35 m from every predicted
-row axis are used. The row axis is the planting: canopies, white vine tubes, stakes and posts.
+**Candidates.** Blobs inside the inter-row polygons (inset 0.30 m from the row axes) that are:
+- white: darkest channel ≥ 170, and ≥ 40 brighter than the 2 m median background;
+- coloured: chroma ≥ 60, hue outside the 25–175 band of soil and vegetation;
+- black: neutral, luminance ≤ 45, and ≥ 60 darker than the background.
 
-1. **Candidates.** Blobs whose RGB distance from the 2 m median background is ≥ 90, that are not green and not shadow.
-2. **`accept` keeps a blob when all of these hold:**
-   - 0.15–1.5 m²
-   - mean distance ≥ 170
-   - luminance ≥ 215 and chroma ≤ 20 (white plastic)
-   - narrow-axis spread ≥ 0.08 m (a lying stake is a few cm)
-   - no pale structure (sheds, trucks, concrete, tracks)
-3. **Box.** The box is the largest bright piece of the blob, so a lying tube merged into the blob does not stretch it.
-4. **`vineyard_id`** is the block the blob lies in.
+**`accept` keeps:**
+- white blobs of 0.03–1.5 m² with luminance ≥ 220, chroma ≤ 15 and distance ≥ 150, that are not a thin line (narrow spread ≥ 0.04 m, length ≤ 3× width) and lie ≥ 0.9 m from a row axis;
+- coloured blobs ≥ 0.02 m² with chroma ≥ 80 and distance ≥ 100;
+- black blobs never.
 
-**Measured.**
-- 20,063 candidates inside the 36 blocks, in 56 s, 0.65 GB peak, one core.
-- `detect(tiles, predictions, data_dir)` is unchanged, and `predict.py` calls it before `rows.per_tile`.
+**Why these thresholds.**
+- A looser first version (luminance 205, chroma 25, no row distance) kept 86 boxes. By eye they were silvery shrubs, pale clods, and white tubes and stakes leaning or lying beside the rows.
+- Tubes and stakes lie within about 0.75 m of their row axis.
+- Vine shadows in the inter-rows look the same as black plastic.
 
-**Boxes kept: 2, both likely litter.**
+**Measured.** 97,215 candidates in the 1,727 inter-rows of 131 tiles, in 86 s, 1 GB peak, one core.
+
+**Boxes kept: 2.** The user decided to keep both.
 
 | Tile | EPSG:32635 centre | Block | Box | Verdict |
 |---|---|---|---|---|
-| r018_c013 | E 629673.4, N 5220250.2 | P03 | 0.98 × 1.05 m | likely: white plastic item (bag or basin) with a grey film, on the headland by the road |
-| r022_c013 | E 629673.9, N 5220087.5 | P07 | 0.43 × 0.70 m | likely: white bag at a vine row; blob-shaped, among lying white tubes |
+| r019_c013 | E 629675.3, N 5220198.9 | P02 | 0.45 × 0.41 m | likely: white bag-like blob caught on the anchor wire of an end post, 1.4 m from the row |
+| r008_c003 | E 629161.2, N 5220797.2 | P01 | 0.30 × 0.48 m | likely: crumpled white piece in the middle of the inter-row |
 
-Both boxes are about 1 m from the predicted passable space (inter-rows plus passages), so a route along the
-neighbouring inter-row visits them within the 2 m radius.
+**Control.** 0 boxes on the two organizer example tiles (4,580 candidates there).
 
-**Near misses.** A looser setting (0.10 m², distance 160, luminance 205, chroma 25) lets 13 more through. I checked all
-13 by eye:
+**In-sample.** The thresholds were set with these crops in view. The sweep below found about 5 more likely
+inter-row items that the detector misses: slightly tinted white, pink, and items at the canopy edge. So the
+detector's recall is low, and the manual checklist is what should close the gap.
 
-- **Possible third item:** white paper or plastic pieces in grass by a parked car, at the P02 corner (r021_c015, E 629771.4, N 5220128.3, blob 0.24 m²). It has luminance 208 and chroma 21, so it fails the strict thresholds. It is left for a reviewer to draw in Marcaj if they agree.
-- **Unsure:** a yellow-and-white object in a shrub at a P12 row (r014_c004, E 629210.8, N 5220483.3): a container, or equipment.
-- **Not litter:**
-  - a white post with a long shadow, in P04 (r010_c002)
-  - 10 silvery shrubs or blossom, in P13, P15, P20, P21 and P31
+Sheets: `ir_kept2_01.jpg` (the 2 boxes) and `ir_kept_01..04.jpg` (the looser version: 91 blobs, 86 boxes).
 
-**Also seen, not boxed.** Several small white pieces of 0.03–0.09 m² on the grassy NE headland of P03/P02 by the road,
-near a parked truck (r019_c013, r020_c014). They are paper or plastic bits, or stones: unsure, and below the size gate.
+## North checklist for manual annotation (tiles with row index ≤ 23)
 
-**Control.** The two organizer example tiles have no waste. The detector puts 0 boxes on them, out of 520 candidates there.
+`data/generated/work/waste/checklist_north.json` and `checklist_north_01.jpg` hold 26 items: 7 likely, 19 unsure.
+- **Fields:** tile, x_px, y_px, easting, northing, w_m, h_m, verdict, reason, plus vineyard_id.
+- **Order:** the user-hinted P02 north-west item first, then sorted by tile.
+- **Each crop:** a 3 m native view and 16 m of context, with the box drawn.
 
-**In-sample.** The thresholds were set with these crops in view, so this is in-sample. The two kept items are the ones
-found by eye in the central blocks, so the tuning does rest on them.
+**Likely:**
+1. **r020_c011, x 1260, y 1508, P02.** Crumpled white plastic mid inter-row in P02's north-west corner (the user's hint). The detector rejects it, because its chroma of 18 is above 15.
+2. **r007_c004, x 1204, y 536, P01.** A pink/salmon L-shaped plastic, 1.4 m long, under a tree edge in the north of P01.
+3. **r008_c002, x 1720, y 1192, P01.** A crumpled white piece in the inter-row.
+4. **r008_c003, x 625, y 626, P01.** The detector box.
+5. **r011_c001, x 1324, y 221, P04.** White paper or packaging in grass.
+6. **r019_c013, x 708, y 2029, P02.** The detector box on the anchor wire.
+7. **r022_c013, x 888, y 242, P07.** Crumpled clear/white plastic at the canopy edge of a row end, 0.2 m from the axis.
 
-**Crops** (in `data/generated/work/waste/`):
-- `detector_inblock_01.jpg`: the 2 boxes with their verdicts
-- `nearmiss_inblock_01.jpg`: the 13 near misses with their verdicts
-- `zoom_p03_bag_stitched.jpg`, `zoom_p07_bag.jpg`, `zoom_p02_car.jpg`: native zooms
-- `central_*.jpg`, `central_anom_*.jpg`, `central_strong_*.jpg`: the central-block scans
-- `inblock_*.jpg`: the ranked in-block candidates
+**Unsure** (19): small white scraps and crumpled pieces, a box-like white piece at the P02/P07 row end, and a
+yellow box in a P12 shrub (possibly equipment, which is not waste). Also:
+- two dark objects: a black bag or an animal in P14, and a round black object by the shed at P02, which could be a tyre or a bucket;
+- the P03 headland item, which is outside the inter-rows;
+- the P07 bag among lying tubes, 0.59 m from its row, which the inter-row rule excludes.
 
-Review with `research/probes/waste_inblock_review.py`.
+**How the sweep was done**, all on the northern tiles:
+1. **Low-threshold review set.** From the detector's inter-row candidates: white ≥ 0.01 m², luminance ≥ 205, chroma ≤ 30, ≥ 0.45 m from a row; every coloured blob; black ≥ 0.08 m², compact, ≥ 0.7 m from a row. Clustered, that makes 854 spots, all viewed as native 2.4 m crops on 14 sheets (`sweep_north_*.jpg`), with about 60 zoomed at 5× (`zoom_sweep_*`, `zoom_bright_*`).
+2. **Yellow and grey pass.** 9 blobs, all leaves (`sweep2_north_01.jpg`).
+3. **Canopy-edge pass.** Compact bright blobs within 0.6 m of a row axis, which the inter-row inset hides: 74 blobs (`sweep3_north_*.jpg`), which added the P07 bottle and 4 unsure items.
+4. **Tinted-bright pass.** Pink, salmon and bluish white: 105 blobs (`sweep4_north_*.jpg`), which added the pink plastic.
+5. **Full panel review.** Every inter-row of P01, P02, P03, P04, P05, P07, P16, P12, P14, P10, P24 and P25 at native resolution, in 12.5 m panels (`panels_*.jpg`, 47 sheets). It found no further items: tubes, stakes, stones and clods only.
+
+**Outside the inter-rows, not in the checklist:** a burnt rubbish and brush heap with white paper, west of P24
+(E 629453, N 5220530, `zz_g.jpg`).
+
+**Probes:** `waste_sweep.py`, `waste_yellow.py`, `waste_rowedge.py`, `waste_tinted.py`, `waste_block_panels.py`,
+`waste_area.py`, `waste_zoom_sweep.py`, `waste_checklist.py`, `waste_interrow_sheet.py`.
+
+## Earlier in-block version (10:00, superseded)
+
+Only blobs inside predicted blocks and ≥ 0.35 m from the row axes were used. It kept 2 boxes: the P03 headland
+item and the P07 row bag. Archived as `waste_inblock_v2.geojson` and `candidates_inblock_v2.json`.
 
 ## How waste is scored
 
@@ -98,11 +117,11 @@ not (`waste_rtdetr.py`).
 
 ## Recommendation
 
-1. Import the 2 boxes. In Marcaj, the reviewer of r018_c013 and r022_c013 confirms each and resizes it to the whole object.
-   - The P03 box covers the white part; the grey film around it is part of the same object.
-2. Check the P02 car-side pieces (r021_c015). Draw one box, or one box per piece, only if they are clearly litter.
-3. Leave everything else empty.
-4. Waste boxes are route targets. Both kept boxes are reachable (about 1 m from passable space).
+1. Import the 2 inter-row boxes.
+2. This afternoon, annotators go through `checklist_north.json` (and the south agent's list) tile by tile in Marcaj.
+   - Draw a tight box for each item they agree is litter.
+   - Leave out tubes, stakes and anything doubtful: a false box costs as much as a miss.
+3. Every drawn box becomes a route target, so the route must pass within 2 m of it.
 
 ## Downloads that would help (not downloaded)
 

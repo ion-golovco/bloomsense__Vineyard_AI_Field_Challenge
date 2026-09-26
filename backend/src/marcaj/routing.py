@@ -54,15 +54,24 @@ def _length_in(route: LineString, geometry) -> float:
     return float(shapely.length(segments[inside]).sum() + shapely.length(shapely.intersection(partial, geometry)).sum())
 
 
-def check_route(route: LineString, features: list[dict[str, Any]], targets: list[Point] | None = None) -> dict[str, Any]:
+def check_spaces(features: list[dict[str, Any]]) -> dict[str, Any]:
+    """The unions check_route measures against, to compute once when checking many routes over one scene."""
+    return {
+        "passable": passable_space(features), "forbidden": unary_union(_geometries(features, "forbidden")),
+        "canopy": unary_union(_geometries(features, "vineyard")),
+    }
+
+
+def check_route(route: LineString, features: list[dict[str, Any]], targets: list[Point] | None = None, spaces: dict[str, Any] | None = None) -> dict[str, Any]:
     """The zero-score rules (start/end within 5 m of START, at most 2% outside inter-rows plus passages) and
     target visits within 2 m; also metres through forbidden zones and canopies, which the brief rules out.
-    `targets` defaults to the scene's scored inspection and waste features."""
+    `targets` defaults to the scene's scored inspection and waste features; `spaces` is `check_spaces(features)`."""
     starts = _geometries(features, "start")
     if len(starts) != 1:
         raise ValueError(f"Expected one start point, found {len(starts)}")
     start = starts[0]
-    outside_m = max(route.length - _length_in(route, passable_space(features)), 0.0)
+    spaces = check_spaces(features) if spaces is None else spaces
+    outside_m = max(route.length - _length_in(route, spaces["passable"]), 0.0)
     targets = route_targets(features) if targets is None else targets
     visited = sum(route.distance(target) <= VISIT_RADIUS_M for target in targets)
     report = {
@@ -71,8 +80,8 @@ def check_route(route: LineString, features: list[dict[str, Any]], targets: list
         "end_gap_m": start.distance(Point(route.coords[-1])),
         "outside_m": outside_m,
         "outside_share": outside_m / route.length if route.length else 1.0,
-        "forbidden_m": _length_in(route, unary_union(_geometries(features, "forbidden"))),
-        "canopy_m": _length_in(route, unary_union(_geometries(features, "vineyard"))),
+        "forbidden_m": _length_in(route, spaces["forbidden"]),
+        "canopy_m": _length_in(route, spaces["canopy"]),
         "targets": len(targets),
         "visited": visited,
     }

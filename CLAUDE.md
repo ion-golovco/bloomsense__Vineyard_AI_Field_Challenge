@@ -42,14 +42,15 @@ Two separate front ends, one Python package.
 | `plots` | Training-free plots and row axes: seeds from `layers` (a wave floor drops tilled fields), split by row direction, per-plot row lattice (angle, spacing, axes), quadrilateral fit, row walk outward, 5 m merge, road rule; global `vineyard_id` and `row_id` (24 s) |
 | `rows` | Inter-row polygons between neighbouring axes (axis ± 0.30 m, as the reference draws them; ends carried onto passages), stray-row drop, and per-tile `row_structure` / `interrow_cover` from native pixels (20 s, all tiles) |
 | `canopy` | Canopy polygons at native 0.025 m: plain 2g − r − b > 25 inside a ±0.3 m tube of each twice re-fitted row axis, 0.05 m closing, split at necks, shrunk 0.01 m, ≥ 0.2 m² (73 s, all tiles) |
-| `waste` | Waste boxes: colour-blob candidates (white, blue) and a hand-set precision verifier; 29 boxes to review in Marcaj (85 s) |
+| `waste` | Waste boxes inside predicted inter-rows only (the team's call): colour-blob candidates and a strict hand-set verifier; 2 boxes. Manual checklists in `data/generated/work/waste/checklist_*.json` (86 s) |
 | `canopy_net` | The brief's neural network: a 2.0 M-parameter U-Net in plain torch, randomly initialised and self-trained on `canopy` output from 118 tiles (reference tiles and neighbours held out). Weights `models/canopy_net.pt` (7.9 MB). In `predict` it filters the rule's colour pixels (0.854 against 0.855 for the rules alone; alone it scores 0.843) |
-| `predict` | The whole prediction to `data/generated/predictions.geojson`: `uv run --frozen --group sam python -m marcaj.predict` (215 s, 3.9 GB peak) |
+| `predict` | The whole prediction to `data/generated/predictions.geojson`, plus `canopy_flags.csv` (canopies over 3 m to check in Marcaj): `uv run --frozen --group sam python -m marcaj.predict` (215 s, 3.9 GB peak) |
+| `poi`, `sentinel` | Inspection points: ≥ 5 m row gaps and missing planting from rows and canopies (route targets, `challenge: true`), and Sentinel-2 low NDVI/NDMI zones before the flight confirmed by drone evidence (map layer only) |
 | `judge` | The organizer formulas on the reference tiles, plus regressions against verdicts; `marcaj-judge` |
 | `review` | Verdict store at `data/review/verdicts.json` (tracked) |
-| `routing` | Organizer constraints, passable space, `check_route` |
+| `routing`, `route` | Organizer constraints, passable space, `check_route` (outside length summed per segment); the route solver on a 0.5 m grid with a 1.2% outside budget, one route per POI confidence cutoff |
 | `scene` | Scene loading (default `data/generated/scene.json`), measurements, the client payload |
-| `export` | `route.geojson` (FeatureCollection with the organizers' `crs` member) and `measurements.csv` |
+| `export` | `route.geojson` (FeatureCollection with the organizers' `crs` member), `route_targets.csv`, `measurements.csv` and `data/generated/routes.geojson` |
 | `imagery` | Map tiles rendered from the source orthomosaic's overviews |
 | `api` | The client API |
 

@@ -129,7 +129,7 @@ def browser_scene(scene: dict[str, Any]) -> dict[str, Any]:
     totals = rows[0]
     overlays = overlay_features(scene)
     routes = _features_with_label(scene, "route") or [f for f in overlays if f["properties"]["label"] == "route"]
-    official = [item for item in routes if item["properties"].get("min_confidence") is None]
+    official = [item for item in routes if item["properties"].get("min_confidence") is None and item["properties"].get("scope", "site") == "site"]
     targets = [f for f in _features_with_label(scene, "inspection") + overlays
                if f["properties"]["label"] == "inspection" and f["properties"].get("challenge", True)]
     display_features = [{
@@ -149,8 +149,8 @@ def browser_scene(scene: dict[str, Any]) -> dict[str, Any]:
             "interrow_area_m2": totals["interrow_area_m2"],
             "route_length_m": sum(shape(item["geometry"]).length for item in official or routes),
             "target_count": len(targets) + len(_features_with_label(scene, "waste")),
-            # one route per inspection-point confidence cutoff, for the client's slider; min_confidence None is the official route
-            "routes": [{key: item["properties"].get(key) for key in ("min_confidence", "length_m", "targets", "visited", "unreachable", "legal")}
+            # per confidence cutoff: the site route (scope site, min_confidence None is the official route.geojson) and one per field
+            "routes": [{key: item["properties"].get(key) for key in ("scope", "vineyard_id", "min_confidence", "length_m", "targets", "visited", "unreachable", "legal")}
                        for item in routes],
             "rows": [item for item in rows if item["level"] == "row"],
         },

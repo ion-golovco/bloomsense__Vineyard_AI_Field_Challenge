@@ -1,7 +1,8 @@
 """Export the submission files from a projected scene: route.geojson (solved by `marcaj.route` from the scene's
 scored features and the --poi inspection points, refused if it would score 0), route_targets.csv (every target:
 visited, unreachable or over the outside budget, with its distance to the route and the reason), measurements.csv,
-and for the client data/generated/routes.geojson, one route per POI confidence cutoff (all, >= 0.5, >= 0.7)."""
+and for the client data/generated/routes.geojson: site-wide and per-field routes per POI confidence cutoff
+(all, >= 0.5, >= 0.7)."""
 
 import argparse
 import csv
@@ -24,19 +25,23 @@ ORGANIZER_CRS = {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::3
 
 
 def _write_route(scene: dict[str, Any], output_dir: Path, poi: Path | None, confidence_over: float | None, budget: float, routes_path: Path) -> None:
-    """route.geojson and route_targets.csv for every POI (the official route), and routes.geojson with one route per
-    POI confidence cutoff for the client; a cutoff whose route would score 0 is reported and left out."""
+    """route.geojson and route_targets.csv for the site-wide all-POI route (the submission), and routes.geojson for
+    the client: the site-wide route per POI confidence cutoff (all, >= 0.5, >= 0.7) and one route per field and
+    cutoff; a route that would score 0 is reported and left out."""
     started = time.perf_counter()
     targets = route_target_features(scene["features"]) + (poi_targets(poi, confidence_over) if poi else [])
-    solved = routes_by_confidence(scene["features"], targets, (None, 0.5, 0.7) if poi else (None,), budget)
-    for feature, line, rows, report in solved:
+    cutoffs = (None, 0.5, 0.7) if poi else (None,)
+    solved = routes_by_confidence(scene["features"], targets, cutoffs, budget)
+    for feature, line, rows, report in solved[:len(cutoffs)]:
         properties = feature["properties"]
         print(
-            f"route for POI confidence >= {properties['min_confidence']}: {properties['length_m']:.1f} m, start/end gap {properties['start_gap_m']:.2f}/"
+            f"site route for POI confidence >= {properties['min_confidence']}: {properties['length_m']:.1f} m, start/end gap {properties['start_gap_m']:.2f}/"
             f"{properties['end_gap_m']:.2f} m, {properties['outside_share']:.2%} outside passable space ({properties['robust_outside_share']:.2%} of it eroded 0.3 m), "
             f"{report['forbidden_m']:.2f} m forbidden, {report['canopy_m']:.2f} m canopy, {properties['visited']}/{properties['targets']} targets within 2 m"
         )
-    print(f"{len(solved)} routes in {time.perf_counter() - started:.0f} s")
+    fields = [feature["properties"] for feature, *_ in solved[len(cutoffs):]]
+    print(f"{len(fields)} field routes over {len({item['vineyard_id'] for item in fields})} fields, "
+          f"{sum(item['visited'] == item['targets'] for item in fields)} visiting all their targets; {time.perf_counter() - started:.0f} s in all")
     official, line, rows, _ = solved[0]
     if not official["properties"]["closed"] or not official["properties"]["legal"]:
         raise ValueError("The route would score 0: it must start and end within 5 m of START and stay 98% inside passable space")
@@ -55,7 +60,7 @@ def _write_route(scene: dict[str, Any], output_dir: Path, poi: Path | None, conf
     legal = [feature for feature, *_ in solved if feature["properties"]["closed"] and feature["properties"]["legal"]]
     for feature, *_ in solved:
         if feature not in legal:
-            print(f"left out of routes.geojson, it would score 0: the route for POI confidence >= {feature['properties']['min_confidence']}")
+            print(f"left out of routes.geojson, it would score 0: {feature['properties']['scope']} {feature['properties']['vineyard_id']} route for POI confidence >= {feature['properties']['min_confidence']}")
     routes_path.parent.mkdir(parents=True, exist_ok=True)
     routes_path.write_text(json.dumps({"type": "FeatureCollection", "crs": "EPSG:32635", "features": legal}) + "\n", encoding="utf-8")
     print(f"Wrote {len(legal)} routes to {routes_path}")
@@ -67,7 +72,7 @@ def main() -> None:
     parser.add_argument("--no-route", action="store_true", help="write measurements.csv only")
     parser.add_argument("--poi", type=Path, help="inspection points GeoJSON (marcaj.poi output); only challenge: true points are route targets")
     parser.add_argument("--poi-confidence-over", type=float, help="keep only POIs with confidence above this (default: all)")
-    parser.add_argument("--routes", type=Path, default=REPO_ROOT / "data" / "generated" / "routes.geojson", help="the client's routes, one per POI confidence cutoff")
+    parser.add_argument("--routes", type=Path, default=REPO_ROOT / "data" / "generated" / "routes.geojson", help="the client's routes: site-wide and per field, per POI confidence cutoff")
     parser.add_argument("--outside-budget", type=float, default=OUTSIDE_BUDGET, help=f"share of the route allowed outside passable space eroded by 0.3 m (default {OUTSIDE_BUDGET}; the zero-score limit is 0.02)")
     args = parser.parse_args()
     scene = load_projected_scene()

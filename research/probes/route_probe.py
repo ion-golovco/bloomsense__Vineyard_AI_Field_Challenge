@@ -181,8 +181,14 @@ def run(name: str, features: list[dict], targets: list[dict], cutoffs: tuple[flo
     passages = unary_union(_geometries(features, "passage")).difference(unary_union(_geometries(features, "forbidden")))
     short = passages.union(unary_union(_geometries(features, "interrow_area")).difference(passages.buffer(1.0)))
     solved = solver.routes_by_confidence(features, targets, cutoffs)
-    print(f"\n== {name}: {len(targets)} targets, {len(cutoffs)} routes in {time.perf_counter() - started:.1f} s")
-    for feature, line, rows, report in solved:
+    fields = [item[0]["properties"] for item in solved[len(cutoffs):]]
+    print(f"\n== {name}: {len(targets)} targets, {len(cutoffs)} site routes and {len(fields)} field routes over "
+          f"{len({item['vineyard_id'] for item in fields})} fields in {time.perf_counter() - started:.1f} s; field routes legal and closed: "
+          f"{sum(item['legal'] and item['closed'] for item in fields)}, within the robust budget: {sum(item['robust_outside_share'] <= solver.OUTSIDE_BUDGET + 1e-9 for item in fields)}, "
+          f"visiting all their targets: {sum(item['visited'] == item['targets'] for item in fields)}")
+    for item in fields[:6]:
+        print(f"  field {item['vineyard_id']} confidence >= {item['min_confidence']}: {item['length_m']:.0f} m, {item['visited']}/{item['targets']}, {item['outside_share']:.2%} outside")
+    for feature, line, rows, report in solved[:len(cutoffs)]:
         by_status: dict[str, int] = {}
         for item in rows:
             by_status[item["status"]] = by_status.get(item["status"], 0) + 1
@@ -196,7 +202,7 @@ def run(name: str, features: list[dict], targets: list[dict], cutoffs: tuple[flo
         ROUTES.write_text(json.dumps({"type": "FeatureCollection", "crs": "EPSG:32635", "features": [item[0] for item in solved if item[0]["properties"]["legal"] and item[0]["properties"]["closed"]]}) + "\n")
         print("wrote", ROUTES)
     feature, line, rows, report = solved[0]
-    print({key: round(value, 4) if isinstance(value, float) else value for key, value in report.items()})
+    print({key: round(value, 4) if isinstance(value, float) else value for key, value in report.items() if key not in ("tour", "status")})
     for item in rows:
         if item["status"] not in ("visited", "over_budget"):
             print("  ", item)

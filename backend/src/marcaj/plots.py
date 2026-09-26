@@ -3,18 +3,21 @@ Plots are seeded where vine-spacing row energy beats orchard-spacing energy, spl
 dropped when the across-row ExG wave is too weak to be green vines (tractor lines on bare fields), and fitted in each
 plot's own row frame: the sides on the outermost row axes, the ends square to the rows unless clearly oblique. The seed's
 fit is then walked outward row by row and along each row while the row stands out from its inter-rows, so a bare-soil
-core takes in its grassy continuation; fits of one planting that a tree split are joined, and edges that face a road
-are moved onto it. Row axes are the across-row ExG profile peaks, which matched the reference rows to a median
-0.04-0.06 m on both reference tiles. Optionally (`parcel_share` 0.7; off by default until the cadastre licence is
-settled, research/notes/fields.md), a plot then takes in the rest of a cadastral parcel it already covers 70% of when
-that rest shows the plot's own rows. Parcels come from the public cadastre WMS of I.P. Cadastrul Bunurilor Imobile
-(https://map.cadastru.md/geoserver/ows, layer w_cbi:cad_terenuri, fetched 26 Sep 2026 by `marcaj.cadastre`) and are
-read from data/raw/external/cadastre/parcels_32635.geojson; with `parcel_share` set, a missing file raises FileNotFoundError.
+core takes in its grassy continuation; a new outer row also counts when its tube is green and its flanks much less so
+(young or weak vines the tube-minus-flank contrast misses). Fits of one planting that a tree split are joined, and
+edges that face a road are moved onto it. Row axes are the across-row ExG profile peaks, which matched the reference
+rows to a median 0.04-0.06 m on both reference tiles. Optionally (`parcel_share` 0.7; off by default until the
+cadastre licence is settled, research/notes/fields.md), a plot then takes in the rest of a cadastral parcel it already
+covers 70% of when that rest shows the plot's own rows. Parcels come from the public cadastre WMS of I.P. Cadastrul
+Bunurilor Imobile (https://map.cadastru.md/geoserver/ows, layer w_cbi:cad_terenuri, fetched 26 Sep 2026 by
+`marcaj.cadastre`) and are read from data/raw/external/cadastre/parcels_32635.geojson; with `parcel_share` set, a
+missing file raises FileNotFoundError.
 
 Against the 35 hand-drawn vineyard outlines (`judge.plot_scores`, north tunes, south validates): north F1 0.81 at
-IoU 0.5, 0.54 at 0.75, median best IoU 0.76, area IoU 0.81; south 0.65 / 0.35 / 0.70 / 0.66. With the parcels north
-0.81 / 0.54 / 0.76 / 0.82 and south 0.76 / 0.41 / 0.70 / 0.70. The frozen detector before the walk scored
-0.59 / 0.44 / 0.65 / 0.79 and 0.47 / 0.12 / 0.52 / 0.55. About 22 s."""
+IoU 0.5, 0.60 at 0.75, median best IoU 0.76, area IoU 0.81; south 0.65 / 0.35 / 0.70 / 0.68. Without the green
+outer-row test 0.81 / 0.54 / 0.76 / 0.81 and 0.65 / 0.35 / 0.70 / 0.66 (research/notes/fields.md); the parcel fill was
+measured on that base at 0.81 / 0.54 / 0.76 / 0.82 and 0.76 / 0.41 / 0.70 / 0.70. The frozen detector before the walk
+scored 0.59 / 0.44 / 0.65 / 0.79 and 0.47 / 0.12 / 0.52 / 0.55. About 22 s."""
 
 import json
 import time
@@ -58,8 +61,8 @@ class PlotParams:
     walk_reach_m: float = 40.0    # how far beyond its seed a plot may be walked
     gap_m: float = 3.0            # a row may lapse this long (missing vines); a track, headland or tree clump stops it
     new_row_share: float = 0.6    # a new outer row needs evidence along this share of its neighbour
-    side_green: float = 0.0       # ...or this share of its tube green (mosaic ExG > 0.08); 0 = off
-    side_flank: float = 0.5       # ...with its flanks at most this share as green
+    side_green: float = 0.3       # ...or, vine green on the lattice, this share of its +-0.3 m tube green (mosaic ExG > 0.08); 0 = off
+    side_flank: float = 0.7       # ...with the tubes half a spacing to either side at most this share as green (not a verge)
     merge_m: float = 5.0          # fits of one planting under this far apart join (the 5 m block rule); 0 = off
     parcel_share: float = 0.0     # a cadastral parcel the plot already covers this share of is filled... (0.7 measured; 0 = off until the cadastre licence is settled)
     parcel_gate: float = 0.4      # ...where the rest shows the plot's rows: across-row ExG wave at its angle and spacing >= this share of the plot's
@@ -258,6 +261,7 @@ def _walk(excess: _Excess, region: Polygon, angle: float, spacing: float, usable
             best = max(candidates, key=lambda iv: np.median(np.where(ok[iv, a:b + 1], evidence[iv, a:b + 1], -np.inf)))
             if (ok[best, a:b + 1] & (evidence[best, a:b + 1] > threshold)).mean() < params.new_row_share:
                 # or vine green on the lattice: green along the row, much less half a spacing to either side (not a verge)
+                best = max(candidates, key=lambda iv: green[iv, a:b + 1].mean())
                 row, flank = green[best, a:b + 1].mean(), 0.5 * (green[best - half, a:b + 1] + green[best + half, a:b + 1]).mean()
                 if not params.side_green or row < params.side_green or flank > params.side_flank * row or ok[best, a:b + 1].mean() < params.new_row_share:
                     break
