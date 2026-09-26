@@ -294,3 +294,61 @@ once per tile; peak RSS 0.76 GB):
 - **Axes dropped by the mean-green test**: those tubes are mostly weeds. Lowering the test brings the grass strips
   back.
 - **U-Net filter**: not a cause (97 m², mostly grass).
+
+## 26 September, 19:35–21:00: dark foliage in V19-11 / V21-13 / V22-13, grass on verge rows (round three)
+
+Harness: `research/probes/canopy_v3_quick.py` (four central-field tiles + the two organizer tiles, 15 s per variant),
+`canopy_v3_trials.py` (whole site on the frozen v4 rows with cached network probabilities; judge, the user's labels in
+`data/review/verdicts.json` at their final count: canopies 20 not-a-vine / 109 several / 21 one-plant, gaps 115
+vines-present / 75 real / 29 not-a-row / 22 partly), `canopy_v3_sheet.py`, `canopy_v3_tiles.py`, `canopy_v3_notrow.py`,
+`canopy_v3_rows.py`, `canopy_v3_v0804.py`. Outputs in `data/generated/work/canopy_v3/`.
+
+**The organizers leave the same gaps.** Row cover (share of visible row samples with canopy within 0.3 m, as `poi`
+measures it) of the organizers' own rows and canopies: 0.722 on r021_c012 (a tile of V21-13) and 0.714 on r006_c004;
+ours on their rows 0.733 / 0.701. The central fields read 0.71-0.78 per tile. Pushing cover towards 1 departs from the
+reference style, which the judge scores.
+
+**Dark foliage.** CIELAB a* < -8 is a strict subset of 2g - r - b > 25 on these tiles (0 pixels added), so `lab_a` and
+an a* term in the weak stretches change nothing. The reference pixels the index misses have 2g - r - b 22-44 and a* -12
+to -3, the same range as the band's non-canopy pixels at the upper end; every colour extension has precision 0.1-0.45
+against the reference (`canopy_v2_dark.py`). Hysteresis (tube pixels 8-connected to the canopy, `grow_*`) reaches the
+external model's cover and its judge collapse: 2g - r - b > 15 gives cover 0.84-0.89 and canopy 0.632.
+
+| Variant (whole site, frozen v4 refit rows) | judge canopy (IoU / F1) | 2-tile total | field cover V19-11 / V21-13 / V22-13 | not-a-vine removed | vines lost | gap vines-present flagged | gap real flagged | planting vines-present flagged |
+|---|---|---|---|---|---|---|---|---|
+| v4's own canopies (first pass, lattice rows) | 0.8512 (0.8177 / 0.9015) | 27.24 | 0.721 / 0.693 / 0.782 | 10/20 | 0/130 | 33/77 | 47/68 | 25/38 |
+| round-two defaults (second pass, refit rows) | 0.8563 (0.8273 / 0.8998) | 27.39 | 0.721 / 0.694 / 0.781 | 10/20 | 0/130 | 30/77 | 49/68 | 21/38 |
+| **`grass_ratio` 0.9 (shipped)** | **0.8563** | **27.39** | 0.714 / 0.687 / 0.781 | **12/20** | **0/130** | 30/77 | 49/68 | 22/38 |
+| `grass_ratio` 0.95 | 0.8563 | 27.39 | 0.714 / 0.686 / 0.781 | 12/20 | 0/130 | 30/77 | 49/68 | 22/38 |
+| + hysteresis a* < -4, 2g-r-b > 10 | 0.8318 (0.8087 / 0.8665) | 25.99 | 0.744 / 0.726 / 0.807 | 11/20 | 0/130 | 25/77 | 46/68 | 17/38 |
+| + same, within 0.10 m of the axis | 0.8521 (0.8232 / 0.8954) | 27.06 | 0.732 / 0.708 / 0.795 | 11/20 | 0/130 | 29/77 | 46/68 | 20/38 |
+| + hysteresis a* < -5, 2g-r-b > 12 | 0.8528 (0.8245 / 0.8952) | 27.15 | 0.721 / 0.694 / 0.786 | 11/20 | 0/130 | 30/77 | 48/68 | 18/38 |
+| + hysteresis 2g-r-b > 20 | 0.7977 (0.7773 / 0.8281) | 23.94 | 0.780 / 0.759 / 0.834 | 11/20 | 0/130 | 17/77 | 43/68 | 15/38 |
+| + `tuft_m2` 0.05 | 0.8540 (0.8266 / 0.8951) | 27.34 | 0.716 / 0.689 / 0.784 | 12/20 | 0/130 | 24/77 | 41/68 | 22/38 |
+| + 1 m weak stretches, share 0.10, tuft 0.05 | 0.8440 (0.8209 / 0.8788) | 26.99 | 0.725 / 0.699 / 0.795 | 12/20 | 0/130 | 26/77 | 36/68 | 20/38 |
+Otsu inside the plot's tube: canopy 0.635. (0.01 canopy = 0.25 judge points.) Every recall variant fills real gaps
+about as fast as vines-present ones or costs over a judge point; the best ratio (hysteresis a* < -4: 9 vines-present
+fixed for 3 real gaps lost) costs 1.4 points on the two tiles.
+
+**Second pass on refit rows.** The first two rows of the table differ only in the rows: canopy on the lattice rows
+(what `predict.py` exports) against canopy re-run on the rows `refit_rows` moved onto that canopy: +0.0051 canopy,
+3 fewer vines-present gaps and 4 fewer vines-present planting ends flagged, 2 more real gaps kept.
+
+**Grass verges (`grass_ratio`).** Per row in the three fields, the canopy colour of the two verge rows (V19-11-R001,
+V21-13-R001) was 0.72 of the block median in mean 2g - r - b and 0.68-0.76 in mean |grad g|, with flanks 2.0-2.9 times
+as green; the other 133 rows 0.91-1.06. On every axis (not only outermost) at 0.85 the test removed 263 pieces including
+weak vine rows in mixed plots (2 labelled vines lost); limited to outermost axes with flanks over 1.5 times the median's
+and over 15% green: 75 pieces / 88 m2 at 0.9, all verge grass or weeds in `removed_*` sheets; 0.95 adds 22 pieces of
+which about 12 are a real edge row in grassed V12-04.
+
+**Not-a-row labels (29).** They are POI stretches on row axes that run on past the vines: into meadow or verge
+(r029_c023, r037_c024, r030_c024), over a hut (r020_c013), across tilled ground (r034_c025). 26 of them hold no canopy
+already; the verge rule clears the two on r020_c014 (1.29 -> 0.06 and 0.35 -> 0 m2). Removing false rows needs
+plots/rows: trim a row where it leaves its canopy into green ground (grass share over 0.75, no canopy), and cut rows at
+obstacles (the green-roof hut).
+
+**V08-04.** Not a border effect: rows reach within 0.9-1.0 m of the forbidden zone and those rows are covered like the
+rest (per-row cover median 0.84 on the frozen rows, 4 of 55 under 0.6). The loss is the grassed strip in the middle
+(r007_c004, r008_c004): young yellow-green vines stand in grass, some lattice axes run on grass between the vine lines
+(axis dropped 30 m2 on r008_c004), long pale grass strips pass the strip rule, and 34-80 m2 per tile of vine colour lies
+0.3-0.6 m beside the axes (415 m2 of block colour on r007_c004 lies over 0.6 m from any axis, mostly grass).

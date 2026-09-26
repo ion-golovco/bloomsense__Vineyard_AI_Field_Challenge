@@ -57,7 +57,16 @@ still 7/10 found. About 0.6 s per tile.
 of 26 September 16:00 (679 rows, 606 moved), the lattice sat a median 7 cm from the canopy (p95 0.18 m at the row centre,
 0.28 m at an end; 0.08 m from the reference rows, now 0.06 m). Canopy outside +-0.3 m of the rows 1,992 -> 1,082 of
 13,928 m2, canopy inside inter-rows 1,792 -> 972 m2, matched inter-row IoU median 0.935 / 0.896 -> 0.957 / 0.938 on
-r021 / r006, >= 5 m gap route targets 114 -> 103; judge 44.86 -> 44.87 (research/probes/rows_refit_*.py). About 4 s for the site."""
+r021 / r006, >= 5 m gap route targets 114 -> 103; judge 44.86 -> 44.87 (research/probes/rows_refit_*.py). About 4 s for the site.
+
+Round three, 26 September evening (research/probes/canopy_v3_*.py, frozen v4 rows, full user labels; research/notes/
+canopy_rules.md): `grass_ratio` (an outermost axis whose canopy colour is paler and smoother than the plot's median axis,
+standing in green flanks, is a verge of grass or weeds) removes 75 pieces / 88 m2 on 12 tiles, all verge grass in the
+sheets; judge unchanged (0.8563 on the refit rows), user "not a vine" 10 -> 12 of 20 removed, 0 of 130 vines lost. Dark
+foliage: CIELAB a* < -8 is a strict subset of 2g - r - b > 25 here, and the pixels the index misses (2g - r - b 15-25,
+a* -8..-2) overlap shadow and soil; the organizers' own row cover on r021_c012 (field V21-13) is 0.72, ours 0.73. Every
+recall variant (`grow_*` hysteresis, finer weak stretches, `tuft_m2`, Otsu) costs judge points and fills about as many
+real gaps as vines-present gaps, so they stay off."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -118,11 +127,10 @@ class CanopyParams:
     veg_ring_gr: float = 8.5
     tuft_m2: float = 0.0       # a piece mostly of weak-stretch pixels (`weak_dn`) is kept down to this; 0 = off
     lab_a: float = 0.0         # also count as colour a pixel whose CIELAB a* (smoothed) is under this (green hue, any darkness); 0 = off
-    weak_a: float = 0.0        # weak stretches also take pixels whose a* is under this (dark green foliage); 0 = off
     grow_a: float = 0.0        # grow the canopy into tube pixels 8-connected to it whose a* is under this...; 0 = off
     grow_dn: float = 5.0       # ...and 2g - r - b above this (grey-brown shadow on soil has a* near 0 and 2g - r - b near 0)
     grow_core_m: float = 0.0   # ...within this distance of the axis only (bridges plants along the row, not their shaded flank); 0 = the tube
-    grass_ratio: float = 0.0   # drop an axis whose canopy colour is both paler (mean 2g - r - b) and smoother (mean |grad g|) than
+    grass_ratio: float = 0.9   # drop an axis whose canopy colour is both paler (mean 2g - r - b) and smoother (mean |grad g|) than
     grass_axes: int = 4        # ...this share of the median axis of its plot on the tile (at least `grass_axes` axes); 0 = off
     grass_flank: float = 1.5   # ...when it is an outermost axis and its flanks are over this times as green as the median's
     grass_flank_min: float = 0.15  # ...and over this share green (2g - r - b above `green_dn`)
@@ -373,11 +381,11 @@ def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], para
     if params.otsu and band.any():
         green = (excess > otsu(excess[band & valid])) & valid
     mask = green & band
-    hue = lab_a_star(rgb, params) if params.weak_a or params.grow_a else None
     if params.grow_a:
+        hue = lab_a_star(rgb, params)
         core = tube(kept, transform, green.shape, params.grow_core_m) if params.grow_core_m else band
         mask = ndimage.binary_propagation(mask, EIGHT, mask | (core & valid & (hue < params.grow_a) & (excess > params.grow_dn)))
-    weak = _weak(mask, kept, green, excess, valid, transform, params, hue) if params.weak_dn and params.green_dn else None
+    weak = _weak(mask, kept, green, excess, valid, transform, params) if params.weak_dn and params.green_dn else None
     if weak is not None:
         mask |= weak
     if params.close_m:
@@ -390,7 +398,7 @@ def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], para
 
 
 def _weak(mask: np.ndarray, axes: list[LineString], green: np.ndarray, excess: np.ndarray, valid: np.ndarray,
-          transform: Affine, params: CanopyParams, hue: np.ndarray | None = None) -> np.ndarray:
+          transform: Affine, params: CanopyParams) -> np.ndarray:
     """The pixels to add along each axis: per `weak_window_m` stretch whose tube is under `weak_share` canopy colour,
     those whose 2g - r - b is above `weak_dn` (a weak, young or dark-leaved stretch of row; the full threshold keeps
     shadow and weeds out elsewhere)."""
@@ -405,10 +413,7 @@ def _weak(mask: np.ndarray, axes: list[LineString], green: np.ndarray, excess: n
         window = np.floor(u / params.weak_window_m).astype(int)
         window -= window.min()
         share = np.bincount(window, weights=green[rows, cols]) / np.maximum(np.bincount(window), 1)
-        colour = excess[rows, cols] > params.weak_dn
-        if hue is not None and params.weak_a:
-            colour |= hue[rows, cols] < params.weak_a
-        low = (share[window] < params.weak_share) & colour & valid[rows, cols]
+        low = (share[window] < params.weak_share) & (excess[rows, cols] > params.weak_dn) & valid[rows, cols]
         out[rows[low], cols[low]] = True
     return out & ~mask
 

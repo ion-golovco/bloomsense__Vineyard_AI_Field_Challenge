@@ -1,0 +1,16 @@
+# The image holds code, lockfiles and models/canopy_net.pt only.
+# data/ (data/raw tiles and organizer package, data/generated caches, data/review, data/app) is mounted at run time.
+data/
+output/
+.git/
+backend/.venv/
+web/node_modules/
+web/dist/
+**/__pycache__/
+**/*.py[cod]
+**/.DS_Store
+**/.ipynb_checkpoints/
+.playwright-mcp/
+.context/
+.claude/
+.env

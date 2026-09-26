@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from marcaj.canopy import CanopyParams
 
-D = CanopyParams()
+D = CanopyParams(grass_ratio=0.0)  # the round-two defaults; round three ships grass_ratio 0.9 ("e90")
 VARIANTS: dict[str, CanopyParams] = {
     "defaults": D,
     # finer weak stretches: fill between plants with 2g - r - b above weak_dn where a stretch has almost no full colour
@@ -15,8 +15,6 @@ VARIANTS: dict[str, CanopyParams] = {
     "w1_s10_d12_t05": replace(D, weak_window_m=1.0, weak_share=0.10, weak_dn=12, tuft_m2=0.05),
 }
 VARIANTS.update({
-    "weak_a8": replace(D, weak_a=-8),
-    "weak_a6": replace(D, weak_a=-6),
     "grow_a8": replace(D, grow_a=-8),
     "grow_a10": replace(D, grow_a=-10),
     "grow_a8_d15": replace(D, grow_a=-8, grow_dn=15),
@@ -66,4 +64,11 @@ VARIANTS.update({
     "hyst_a4_c10": replace(D, grow_a=-4, grow_dn=10, grow_core_m=0.10),
     "hyst_dn15_c10": replace(D, grow_a=100, grow_dn=15, grow_core_m=0.10),
     "hyst_dn12_c05": replace(D, grow_a=100, grow_dn=12, grow_core_m=0.05),
+})
+VARIANTS.update({
+    "e90_hyst_a4_c10": replace(E, grow_a=-4, grow_dn=10, grow_core_m=0.10),
+    "hyst_a3_c10": replace(D, grow_a=-3, grow_dn=10, grow_core_m=0.10),
+    "hyst_a4_c08": replace(D, grow_a=-4, grow_dn=10, grow_core_m=0.08),
+    "hyst_a4_c12": replace(D, grow_a=-4, grow_dn=10, grow_core_m=0.12),
+    "hyst_a3_c08": replace(D, grow_a=-3, grow_dn=10, grow_core_m=0.08),
 })

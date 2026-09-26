@@ -17,7 +17,14 @@ on along them (a strip's own parcel); a parcel never creates a plot. Parcels com
 Cadastrul Bunurilor Imobile (https://map.cadastru.md/geoserver/ows, layer w_cbi:cad_terenuri, fetched 26 Sep 2026 by
 `marcaj.cadastre`; no reuse licence found, research/notes/fields.md) and are read from
 data/raw/external/cadastre/parcels_32635.geojson; a missing file raises FileNotFoundError, and `parcel_share=0,
-parcel_along=0, track_m=0` runs without it.
+parcel_along=0, track_m=0, overgrown_snr=0` runs without it. A third pass (`_overgrown`, after the merge) takes in
+vineyards under weeds and shrubs, which neither seed layer reaches (the lab's 7 `overgrown` outlines, 0% covered): an
+uncovered parcel near a plot whose shrub-clipped rows follow that plot's lattice. Such a plot is marked `overgrown` and
+verify_plots skips its canopy-cover check (canopy on 4-25% of those rows) and needs only `overgrown_contrast`. On the
+lab's outlines (research/probes/plots_v5_*.py) it adds 5 plots; verify keeps the 3 on overgrown #41/#42, #43 and #48
+(2,700 m2, contrast 0.010-0.024) and drops a treed strip (0.006) and grass beside #23 (0.000). Overgrown cover 0 -> 0.19,
+north unchanged, south F1@0.5 0.875 -> 0.800 (each new plot covers its outline only in part, IoU 0.23-0.38, so it counts
+as unmatched). Nothing changes on the two reference tiles.
 
 A plot is one row pattern (one lattice: angle, spacing, phase); a block is the organizers' vineyard_id: plots that touch
 or lie under 5 m apart, unless a road or a track (a strip outside every parcel) lies between (`_blocks`). detect_plots
@@ -104,6 +111,12 @@ class PlotParams:
     track_m: float = 1.5          # ...unless a road lies between, or a track: this much of the link outside every cadastral parcel; 0 = no parcels
     lattice_m: float = 8.0        # ...and two plots of one row lattice this close (2 rows lost) are one block when the ground between carries their rows; 0 = off
     snap_deg: float = 6.0         # a second-pass plot under block_m from a first-pass plot within this angle (and 8% spacing) takes its lattice; 0 = off
+    overgrown_snr: float = 10.0   # third pass: a parcel near a plot, on its lattice, whose shrub-clipped vine peak beats the broad-band median this much; 0 = off
+    overgrown_reach_m: float = 30.0  # ...within this of the plot
+    overgrown_clip: float = 0.12  # ...ExG clipped here (shrubs and trees 0.2+, vines under weeds 0.05-0.12)
+    overgrown_null: float = 1.5   # ...and this many times the same measure square to the rows (a random weed field)
+    overgrown_vo: float = 0.35    # ...and the vine peak at least this share of the orchard band's (3.6-8 m)
+    overgrown_contrast: float = 0.009  # verify_plots: such a plot skips verify_cover and needs this verify_contrast (weeds between the rows; a treed strip 0.006, overgrown 0.010-0.024)
     # verify_plots, after the canopy (looks_like_vineyard); each check is off at 0
     verify_cover: float = 0.25    # canopy along at least this share of the row length (young strips 0.34-0.56, scrub 0-0.19)
     verify_contrast: float = 0.015  # mosaic ExG on the rows minus halfway between them (outlined 0.033+, a weed strip 0.010)
@@ -387,6 +400,67 @@ def _fill_parcels(fitted: list, excess: _Excess, roads, parcels: list, params: P
     return out
 
 
+def _clipped(excess: _Excess, top: float) -> _Excess:
+    out = object.__new__(_Excess)
+    out.values, out.transform = np.minimum(excess.values, top), excess.transform
+    return out
+
+
+def _band_snr(excess: _Excess, polygon: Polygon, angle: float) -> tuple[float, float, float]:
+    """Across-row ExG spectrum at this angle: vine-band (2.0-3.3 m) peak over the 1-8 m median, its spacing, and the peak
+    over the orchard band's (3.6-8 m) maximum."""
+    frame = _Frame(polygon, angle, MOSAIC_PX_M)
+    counts = frame.inside.sum(1)
+    use = counts > 20
+    if use.sum() < 16:
+        return 0.0, 0.0, 0.0
+    profile = ((excess.at(frame.x, frame.y) * frame.inside).sum(1) / np.maximum(counts, 1))[use]
+    power = np.abs(np.fft.rfft((profile - profile.mean()) * np.hanning(len(profile)), 4096)) ** 2
+    f = np.fft.rfftfreq(4096, MOSAIC_PX_M)
+    vine, orchard, broad = (f >= 1 / 3.3) & (f <= 1 / 2.0), (f >= 1 / 8) & (f < 1 / 3.6), (f >= 1 / 8) & (f <= 1.0)
+    k = np.flatnonzero(vine)[np.argmax(power[vine])]
+    return float(power[k] / max(np.median(power[broad]), 1e-12)), float(1 / f[k]), float(power[k] / max(power[orchard].max(), 1e-12))
+
+
+def _overgrown(fitted: list, excess: _Excess, roads, usable_at, parcels: list, params: PlotParams) -> list:
+    """Third pass for vineyards under weeds and shrubs (the lab's `overgrown` outlines, 0% found before): shrubs put
+    energy in the orchard band and weeds fill the inter-rows, so neither seed layer reaches them. A cadastral parcel the
+    plots leave uncovered, within `overgrown_reach_m` of a plot and wholly in the imagery, becomes a plot when, on ExG
+    clipped at `overgrown_clip` (a shrub counts no more than a vine), the across-row spectrum at the plot's angle (+-3
+    degrees) peaks within 12% of the plot's spacing, `overgrown_snr` times the broad-band median, `overgrown_null` times
+    the same measure square to the rows (a weed field has no direction), at least `overgrown_vo` of the orchard band,
+    with an ExG wave >= `min_wave_exg`. A parcel is ownership, so it only frames rows the lattice already predicts."""
+    clipped = _clipped(excess, params.overgrown_clip)
+    covered = unary_union([polygon for polygon, *_ in fitted]).buffer(params.strip_clear_m)
+    tree, out = STRtree([polygon for polygon, *_ in fitted]), []
+    for parcel in parcels:
+        region = _largest(parcel.difference(roads.buffer(params.road_setback_m)).difference(covered))
+        if region.area < params.strip_min_m2 or region.area < 0.5 * parcel.area:
+            continue
+        near = sorted((fitted[k][0].distance(region), k) for k in tree.query(region.buffer(params.overgrown_reach_m)))
+        if not near or near[0][0] > params.overgrown_reach_m:
+            continue
+        points = np.array([region.representative_point().coords[0]] + list(region.exterior.coords))
+        if not usable_at(*points.T).all():
+            continue
+        _, a0, s0, _ = fitted[near[0][1]]
+        best = None
+        for angle in a0 + np.arange(-3, 3.1, 1.0):
+            snr, spacing, vo = _band_snr(clipped, region, angle)
+            if abs(spacing / s0 - 1) <= 0.12 and snr >= params.overgrown_snr and vo >= params.overgrown_vo and (best is None or snr > best[0]):
+                best = (snr, angle, spacing)
+        if best is None or best[0] < params.overgrown_null * _band_snr(clipped, region, best[1] + 90)[0] or _wave(clipped, region, best[1], best[2]) < params.min_wave_exg:
+            continue
+        result = _quadrilateral(clipped, region, best[1], best[2], params)
+        if result is None or len(result[1]) < params.strip_min_rows:
+            continue
+        # inside the uncovered rest only: a weedy parcel never takes over a plot the first passes fitted
+        polygon = _largest(_onto_roads(result[0], roads, params).intersection(region.buffer(0.5)))
+        if polygon.area >= params.strip_min_m2:
+            out.append((polygon, best[1], best[2], result[1]))
+    return out
+
+
 def _merge(fitted: list, excess: _Excess, roads, params: PlotParams) -> list:
     """Joins two fits of one planting that a tree or a weak stretch split: same angle and spacing, rows on one lattice
     (a half-spacing shift is another planting), under `merge_m` apart with no road between, and filling at least 80%
@@ -525,6 +599,12 @@ def detect_plots(params: PlotParams = PlotParams(), data_dir: Path = DATA_DIR, l
         taken = rasterize(clear, out_shape=layers.valid.shape, transform=layers.transform).astype(bool) if clear else np.zeros_like(blocked)
         fitted += fit(_regions(load_layers(data_dir, tophat_m=STRIP_TOPHAT_M), blocked | taken, replace(params, ratio_min=params.strip_ratio)), strict=True, near=fitted)
     fitted = _merge(fitted, excess, roads, params) if params.merge_m else fitted
+    weedy = []
+    if params.overgrown_snr:
+        # after the merge, so a weedy parcel never bridges two plots into one
+        weedy = _overgrown(fitted, excess, roads, usable_at, load_parcels(), params)
+        fitted += weedy
+    weedy = unary_union([polygon for polygon, *_ in weedy])
     if params.parcel_share:
         fitted = _fill_parcels(fitted, excess, roads, load_parcels(), params)
     # a bigger plot keeps an overlap, and a fit mostly inside an accepted plot is the same plot found twice
@@ -546,7 +626,7 @@ def detect_plots(params: PlotParams = PlotParams(), data_dir: Path = DATA_DIR, l
         features.append({"type": "Feature", "geometry": mapping(polygon),
                          "properties": {"label": "block", "vineyard_id": pattern_id, "pattern_id": pattern_id, "block_id": block_id,
                                         "area_m2": round(polygon.area), "row_angle": round(angle, 1), "row_spacing_m": round(spacing, 2),
-                                        "rows": len(rows), "params": asdict(params)}})
+                                        "rows": len(rows), "overgrown": polygon.intersection(weedy).area > 0.5 * polygon.area, "params": asdict(params)}})
         features += [{"type": "Feature", "geometry": mapping(row),
                       "properties": {"label": "row", "vineyard_id": pattern_id, "pattern_id": pattern_id, "block_id": block_id,
                                      "row_id": f"{pattern_id}-R{k:03d}", "row_structure": "regular", "length_m": round(row.length, 2)}}
@@ -682,11 +762,15 @@ def verify_plots(found: list[dict[str, Any]], canopies: list[dict[str, Any]], pa
     features with their evidence and reason); every kept `block` carries its `vine_evidence`."""
     excess = excess or load_excess(data_dir)
     evidence = vine_evidence(found + canopies, excess)
-    checked = {pattern: looks_like_vineyard(e, params) for pattern, e in evidence.items()}
+    key = lambda p: p.get("pattern_id") or p.get("vineyard_id", "")
+    # vines under weeds and shrubs show too little canopy for verify_cover (4-25%) and weeds green the ground between them
+    weedy = {key(f["properties"]) for f in found if f["properties"]["label"] == "block" and f["properties"].get("overgrown")}
+    lenient = replace(params, verify_cover=0, verify_contrast=params.overgrown_contrast)
+    checked = {pattern: looks_like_vineyard(e, lenient if pattern in weedy else params) for pattern, e in evidence.items()}
     # a weak pattern in a block with a vine-like one is that vineyard's weedy part (#10's grassy north-west rows), not a false plot
     verified = {e["block_id"] for pattern, e in evidence.items() if checked[pattern][0]}
-    checked = {pattern: (True, "") if evidence[pattern]["block_id"] in verified else result for pattern, result in checked.items()}
-    key = lambda p: p.get("pattern_id") or p.get("vineyard_id", "")
+    # ...but a third-pass plot stands on its own evidence (#23's grass beside it: 11 rows, no canopy, contrast 0.000)
+    checked = {pattern: (True, "") if evidence[pattern]["block_id"] in verified and pattern not in weedy else result for pattern, result in checked.items()}
     rounded = lambda e: {k: round(v, 3) if isinstance(v, float) else v for k, v in e.items() if k != "block_id"}
     blocks = [f for f in found if f["properties"]["label"] == "block"]
     kept = [f for f in blocks if checked[key(f["properties"])][0]]

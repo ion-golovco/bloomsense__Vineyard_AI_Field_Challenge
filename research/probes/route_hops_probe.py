@@ -3,8 +3,10 @@ world the client's routes plan on (`route.planning_features` of the app's scene)
 Run from backend/: uv run --frozen python ../research/probes/route_hops_probe.py [smoke] [sweep] [controls] [regenerate]"""
 
 import json
+import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import shapely
@@ -15,14 +17,22 @@ from marcaj.routing import CROSSING_TOLERANCE_M, _geometries, check_route, check
 from marcaj.scene import OVERLAYS, load_projected_scene, scene_path
 from marcaj.tiles import REPO_ROOT
 
-OUT = REPO_ROOT / "data" / "generated" / "work" / "route_v2"
+# another world or run: MARCAJ_SCENE_PATH (scene), MARCAJ_POI (POIs), ROUTE_OUT (output folder), ROUTES_OLD (routes
+# to compare and merge with), ROUTE_OUTSIDE_WEIGHT / ROUTE_BLOCK_VALUE (route.OUTSIDE_WEIGHT / BLOCK_VALUE for this run)
+OUT = Path(os.environ.get("ROUTE_OUT", REPO_ROOT / "data" / "generated" / "work" / "route_v2"))
 OUT.mkdir(parents=True, exist_ok=True)
+OLD = Path(os.environ.get("ROUTES_OLD", REPO_ROOT / "data" / "generated" / "routes.geojson"))
+POI = Path(os.environ.get("MARCAJ_POI", OVERLAYS[0]))
+if "ROUTE_OUTSIDE_WEIGHT" in os.environ:
+    solver.OUTSIDE_WEIGHT = solver.HOP_OUTSIDE_WEIGHT = float(os.environ["ROUTE_OUTSIDE_WEIGHT"])
+if "ROUTE_BLOCK_VALUE" in os.environ:
+    solver.BLOCK_VALUE = float(os.environ["ROUTE_BLOCK_VALUE"])
 
 
 def world() -> tuple[list[dict], list[dict], str]:
     scene = load_projected_scene()
     features, name = solver.planning_features(scene)
-    targets = solver.route_target_features(features) + (solver.poi_targets(OVERLAYS[0]) if OVERLAYS[0].is_file() else [])
+    targets = solver.route_target_features(features) + (solver.poi_targets(POI) if POI.is_file() else [])
     stat = scene_path().stat()
     print(f"world {name}: {len(features)} features, {len(targets)} targets")
     return features, targets, f"{scene_path()}:{stat.st_size}:{stat.st_mtime_ns}:{name}"
@@ -82,7 +92,7 @@ def controls() -> None:
     features, targets, token = world()
     spaces = check_spaces(features)
     start = _geometries(features, "start")[0]
-    official = next(item for item in json.loads((REPO_ROOT / "data" / "generated" / "routes.geojson").read_text())["features"]
+    official = next(item for item in json.loads(OLD.read_text())["features"]
                     if item["properties"]["scope"] == "site" and item["properties"]["min_confidence"] is None)
     line = LineString(official["geometry"]["coordinates"])
     base = check_route(line, features, [], spaces)
@@ -154,10 +164,10 @@ def regenerate() -> None:
     from marcaj.export import _write_route
     features, targets, token = world()
     started = time.perf_counter()
-    _write_route({"features": features}, OUT, OVERLAYS[0], None, solver.OUTSIDE_BUDGET, OUT / "routes.geojson", solver.HOP_PENALTY_M)
+    _write_route({"features": features}, OUT, POI, None, solver.OUTSIDE_BUDGET, OUT / "routes.geojson", solver.HOP_PENALTY_M)
     print(f"regenerated in {time.perf_counter() - started:.0f} s")
     old = {(f["properties"]["scope"], f["properties"]["vineyard_id"], f["properties"]["min_confidence"]): f["properties"]
-           for f in json.loads((REPO_ROOT / "data" / "generated" / "routes.geojson").read_text())["features"]}
+           for f in json.loads(OLD.read_text())["features"]}
     new = {(f["properties"]["scope"], f["properties"]["vineyard_id"], f["properties"]["min_confidence"]): f["properties"]
            for f in json.loads((OUT / "routes.geojson").read_text())["features"]}
     worse = [key for key in old if key in new and new[key]["visited"] < old[key]["visited"]]
@@ -182,7 +192,7 @@ def merge() -> None:
         return {(f["properties"]["scope"], f["properties"]["vineyard_id"], f["properties"]["min_confidence"]): f
                 for f in json.loads(path.read_text())["features"]}
 
-    old, new = load(REPO_ROOT / "data" / "generated" / "routes.geojson"), load(OUT / "routes.geojson")
+    old, new = load(OLD), load(OUT / "routes.geojson")
     field_of = {target["id"]: target.get("vineyard_id") or "" for target in targets}
     conf = {target["id"]: target.get("confidence") for target in targets}
 
@@ -194,13 +204,16 @@ def merge() -> None:
         report = check_route(line, features, [points[t] for t in ids], spaces)
         robust = 1 - solver._length_in(line, solver.robust_space(features)) / line.length if "robust" not in kept else 1 - solver._length_in(line, kept["robust"]) / line.length
         fits = report["legal"] and report["closed"] and robust <= solver.OUTSIDE_BUDGET + 1e-9
-        properties.update({"visited": report["visited"], "targets": len(ids), "unreachable": len(ids) - report["visited"], "legal": bool(report["legal"]),
+        status = [item["status"] for item in properties.get("target_status", [])]
+        properties.update({"visited": report["visited"], "targets": len(ids), "unreachable": status.count("unreachable"),
+                           "over_budget": status.count("over_budget"), "legal": bool(report["legal"]),
                            "closed": bool(report["closed"]), "outside_share": round(report["outside_share"], 5), "robust_outside_share": round(robust, 5),
                            "forbidden_m": round(report["forbidden_m"], 3), "canopy_m": round(report["canopy_m"], 3)})
         properties.setdefault("hops", 0)
         properties.setdefault("hop_m", 0.0)
         properties.setdefault("open", False)
-        return (fits, report["visited"], -line.length)
+        seen = [t for t in ids if line.distance(points[t]) <= solver.VISIT_RADIUS_M]  # the solver's value: visited + BLOCK_VALUE per block
+        return (fits, len(seen) + solver.BLOCK_VALUE * len({field_of[t] for t in seen} - {""}), -line.length)
 
     kept["robust"] = solver.robust_space(features)
     merged, picks = [], {"old": 0, "new": 0}

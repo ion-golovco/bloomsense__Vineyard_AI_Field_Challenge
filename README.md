@@ -1,355 +1,272 @@
-# GigaHack Marcaj — Vineyard AI Field Challenge
+# Agrocontrol by BloomSense: Marcaj Vineyard AI Field Challenge
 
-Sireț3 drone imagery → automatic pre-annotations → human correction in Marcaj → vineyard measurements and an inspection route → Agrocontrol by BloomSense map.
+Deeptech GigaHack 2026, team BloomSense.
 
-The detector is a **hybrid system**: image processing finds planting patterns and row geometry; a small, locally trained U-Net filters canopy pixels; geometry processing produces the organizer's four annotation classes. Humans confirm and correct the annotations in Marcaj before final measurements and routing.
+Agrocontrol turns the 311 Sireț3 drone tiles (RGB, 2.5 cm/px, EPSG:32635) into vineyard annotations in the organizers' four classes: `vineyard` canopy polygons, `row` axes, `interrow_area` polygons and `waste` boxes, with `vineyard_id`, `row_id`, `row_structure` and `interrow_cover`. The annotations go to Marcaj as pre-annotations and are corrected there by hand. From the corrected Marcaj export the pipeline computes block and row counts, row lengths and areas (`measurements.csv`), inspection points at row gaps and missing planting, and a closed walking route from the organizer START that stays in inter-rows and authorised passages (`route.geojson`). A web map shows fields, IDs, measurements and routes, and plans new routes on request.
 
-**Review snapshot: 26 September 2026.** The detector, converter, packer, measurement functions, POI generator, route solver and map exist. The application is still a development demonstration: the saved scene mixes two reference tiles with full-site predictions, and saved route overlays come from a development probe. Final corrected-site outputs and several API/UI connections remain unfinished. See [the code review](docs/CODE_REVIEW_2026-09-26.md) for evidence and priorities. A stored route's `legal: true` is not official challenge validation.
+Demo: served from the team laptop at `http://127.0.0.1:8000` (see [Web app](#web-app)).
 
-## Explain it to the mentors
+| Deliverable | Where |
+|---|---|
+| `route.geojson` | repository root, written by `marcaj-export`: one LineString in EPSG:32635 with `length_m` |
+| `measurements.csv` | repository root, written by `marcaj-export`: total, per block (`vineyard_id`) and per row (`row_id`) |
+| `route_targets.csv` | repository root: every route target, visited or not, with its distance to the route and the reason |
+| Annotations | the team's Marcaj project |
+| Neural-network weights | [`models/canopy_net.pt`](models/canopy_net.pt), committed (7,903,127 bytes) |
 
-> We use the drone survey to map individual canopy shapes, vine rows and the ground between rows. We first find repeated planting patterns across the whole survey, then analyse the original high-resolution images inside those regions. A small neural network filters likely canopy pixels, and geometric rules produce annotations with consistent row IDs across tile boundaries. The team corrects those annotations in Marcaj. From the corrected map we calculate lengths and areas, identify candidate missing-vine stretches, and plan a closed inspection walk using the inter-rows and permitted passages. Satellite data adds broad areas worth inspecting; it does not identify individual missing plants or diagnose disease.
-
-Useful distinctions for the presentation:
-
-- A **plot/block** is a planting region; a **`vineyard` annotation** is one canopy polygon, not the whole field.
-- A **row** runs through the vines; an **inter-row** is the lane between two rows.
-- A **gap point** says “inspect this apparent missing-vine stretch.” It is a candidate, not proof of dead plants.
-- Canopy count is an annotation-instance count. Touching plants may merge and one plant may fragment, so it is not a verified vine census.
-- Canopy area and row length are geometric measurements. They do not by themselves estimate yield.
-- The route is a heuristic tour, not a proven globally shortest path. Report coverage and skipped targets alongside distance.
-- The organizer example tiles were used during tuning. Their scores are sanity checks, not unseen-site accuracy or an official jury score.
-
-## The complete workflow
+## Pipeline
 
 ```mermaid
 flowchart TD
-    A[311 unchanged RGB GeoTIFF tiles] --> B[CRC, CRS and raster-grid checks]
-    B --> C[20 cm mosaic and 40 cm planting-pattern layers]
-    C --> D[Candidate plots and global row axes]
-    D --> E[Inter-row polygons]
-    D --> F[Native 2.5 cm RGB plus U-Net canopy filter]
-    E --> G[Conservative inter-row waste candidates]
-    D --> H[Per-tile row and ground-cover attributes]
-    E --> H
-    F --> I[predictions.geojson]
-    G --> I
-    H --> I
-    I --> J[Clip to tiles and pack CVAT 1.1 ZIPs]
-    J --> K[Import once, publish, correct and submit in Marcaj]
-    K --> L[Latest corrected CVAT export]
-    L --> M[Projected scene plus organizer constraints]
-    M --> N[Measurements]
-    M --> O[Candidate row-gap inspection points]
-    S[Optional cached Sentinel-2 scenes] --> T[Persistent low NDVI and NDMI zones]
-    M --> T
-    T --> O
-    M --> P[Passable graph and closed target tour]
-    O --> P
-    P --> Q[route.geojson and target report]
-    N --> R[measurements.csv]
-    M --> U[FastAPI: display copy and drone imagery]
-    O --> U
-    P --> U
-    U --> V[Vite / Leaflet client map]
+    T["311 organizer tiles<br/>CRC-checked, read-only"] --> P["plots.detect_plots<br/>plots and global row axes on a 0.2 m mosaic"]
+    P --> N["canopy_net.tile_canopies<br/>U-Net filter on the colour rule, native 2.5 cm"]
+    N --> F["canopy.refit_rows<br/>row axes moved onto the canopy"]
+    F --> V["plots.verify_plots<br/>drop plots whose canopy does not look like vine rows"]
+    V --> O["obstacles.detect<br/>trees and buildings in or at a block"]
+    O --> I["rows.interrow_areas<br/>axis +/- 0.30 m, obstacles cut out"]
+    I --> W["waste.detect<br/>colour anomalies, hand-set verifier"]
+    W --> A["rows.per_tile<br/>row_structure, interrow_cover per tile"]
+    A --> B["plots.assign_blocks<br/>vineyard_id by the 5 m block rule"]
+    B --> G[("predictions.geojson")]
+    G --> K["marcaj-pack<br/>CVAT 1.1 ZIPs, re-opened and verified"]
+    K --> M["Marcaj<br/>import once, publish, correct by hand, submit every job"]
+    M --> E["Marcaj CVAT export"]
+    E --> S["marcaj-scene<br/>EPSG:32635 scene"]
+    S --> Q["marcaj.poi<br/>gap and missing-planting targets"]
+    S --> X["marcaj-export"]
+    Q --> X
+    X --> R[("route.geojson<br/>route_targets.csv")]
+    X --> C[("measurements.csv")]
+    S --> APP["marcaj.api + web client"]
 ```
 
-This describes the intended final run using implemented modules. Automatic versioning of derived artifacts and the corrected-scene UI are not complete; the commands below make the ordering explicit.
+The prediction stages are the calls in [`predict.py`](backend/src/marcaj/predict.py), in that order. Everything is predicted over the whole site with global `vineyard_id` and `row_id`; objects are cut per tile only when packing (`cvat.image_elements`), so IDs survive tile edges.
 
-### 1. Validate and preserve the input
+### Neural network and classical parts
 
-[`tiles.py`](backend/src/marcaj/tiles.py) inventories the five organizer part ZIPs, extracts missing tiles and checks each against its original file size and CRC. It checks three RGB bands, 2048 × 2048 pixels, EPSG:32635 and a north-up 0.025 m pixel grid. Extracted tiles become read-only.
+**Neural network: [`canopy_net`](backend/src/marcaj/canopy_net.py).** A U-Net in plain PyTorch: 5 levels, 6 input channels (scaled RGB plus RGB chromaticity), 2 outputs, 1,964,546 parameters. It was randomly initialised (no downloaded weights) and self-trained on the rule-based canopy of 118 vineyard tiles, with the two organizer example tiles and their neighbours held out. It was never trained on hand-drawn Sireț3 geometry. In `predict` it runs on every tile a row crosses, in 1024 px windows with 64 px of context, and keeps the colour-rule pixels whose canopy probability exceeds 0.2. On the example tiles this filter ties with the rules alone (canopy 0.851 against 0.852); the network alone scores 0.843 ([notes](research/notes/canopy_net.md)). It runs on Apple MPS when available, otherwise CPU.
 
-Each tile covers 51.2 × 51.2 m. Processing and submission coordinates stay in **EPSG:32635**, in metres. CVAT's tile-pixel shapes convert through the tile affine transform. Leaflet receives a separate longitude/latitude copy in **EPSG:4326**; lengths and areas are never calculated from it. The released study area is approximately 81.5 ha. A separate source orthomosaic provides the map background; the detector uses the released tiles.
-
-### 2. Find planting patterns at reduced resolution
-
-[`mosaic.py`](backend/src/marcaj/mosaic.py) averages each tile 8:1 into one georeferenced **0.2 m/px mosaic**, preserving the original images and supplying context across tile boundaries.
-
-[`layers.py`](backend/src/marcaj/layers.py) computes normalized excess green, `(2G − R − B) / (R + G + B)`, on a **0.4 m grid**. A directional frequency-filter bank measures repeating stripes at 12 orientations:
-
-| Layer | Meaning | Current role |
-|---|---|---|
-| Vine/orchard energy ratio | Pattern strength at 2.0–3.6 m spacing divided by strength at 3.8–7.0 m | Main candidate-region signal |
-| Orchard energy | Strength of the wider-spaced pattern | Denominator of the ratio |
-| Row angle | Strongest vine-pattern direction, in 15° steps | Splits seeds with different directions |
-| Green share | Smoothed share of green pixels | Research diagnostic; not a separate default acceptance gate |
-
-Planting structure matters because grass between rows can be greener than vines, and orchards are green too. These spacing bands are assumptions fitted to this survey, not universal crop definitions. Mosaic/layer caches are reused by existence, not input or parameter hashes; rebuild them explicitly when preprocessing changes.
-
-### 3. Fit plots and row axes globally
-
-[`plots.py`](backend/src/marcaj/plots.py) seeds regions where the energy ratio exceeds 2.0, removes narrow bridges, requires at least 150 m², and splits sufficiently different row directions. For each seed it:
-
-1. Searches row direction coarsely, refines to 0.1°, and estimates spacing from the across-row signal.
-2. Rejects weak vegetation waves to reduce false detections from tractor marks.
-3. Finds row peaks, inserts plausible missing lattice positions, and fits an approximately quadrilateral planting outline.
-4. Walks outward to additional rows and along row ends while vine-versus-inter-row evidence persists; roads and weak/unavailable evidence limit expansion.
-5. Merges compatible fragments with similar angle, spacing and row phase, and resolves overlaps in favour of larger regions.
-6. Assigns plot IDs such as `P02` and global row IDs such as `P02-R017`, before tile clipping.
-
-This merge is **not a complete implementation of the organizer's “plantings under 5 m apart share one block” rule**. IDs survive tile boundaries within a run, but area-ranked plot numbering is not stable between reruns.
-
-Optional cadastral parcel filling in [`cadastre.py`](backend/src/marcaj/cadastre.py) may extend an existing detection when the parcel's remaining area supports the same rows. **It is off by default** (`parcel_share=0.0`); the research notes record unresolved reuse terms. Parcels do not create vineyards, and the default detector needs no cadastral download.
-
-### 4. Extract canopy shapes at the original resolution
-
-[`canopy.py`](backend/src/marcaj/canopy.py) and [`canopy_net.py`](backend/src/marcaj/canopy_net.py) use original **2.5 cm/px RGB** on tiles crossed by predicted rows. The canopy stage cannot rescue regions missed by plot detection.
-
-The default [`predict.py`](backend/src/marcaj/predict.py) run keeps pixels satisfying both:
-
-```text
-smoothed raw excess green: 2G − R − B > 25
-U-Net canopy probability > 0.2
-```
-
-The U-Net has five levels, six input channels (scaled RGB plus RGB chromaticity), two outputs and **1,964,546 parameters**. Repository weights are [`models/canopy_net.pt`](models/canopy_net.pt), 7,903,127 bytes. Only its canopy output is used by the default detector; the trained auxiliary separation output is unused.
-
-Checkpoint metadata identifies `v14_deep`, seed 0, 6,000 steps, batches of 16 crops of 256 × 256 pixels. Labels came from the rule-based canopy detector on **118 tiles**; the two organizer examples and their immediate neighbours were excluded from pseudo-label training. This is **teacher/student self-training on automatic labels**, not training on independently verified plant annotations. Excluding the examples from training does not make them an independent benchmark: rule parameters and network choices were evaluated on them.
-
-Inference uses 1024-pixel windows with 64 pixels of surrounding context. Default full prediction disables flip averaging. The implementation selects Apple MPS when available and otherwise CPU; it does not automatically select CUDA.
-
-Shared geometric post-processing:
-
-1. Refit each axis twice to local accepted green pixels. These moved axes guide canopy masks; they do not replace exported row axes.
-2. Remove suspicious duplicate/inter-row axes and axes whose canopy signal does not stand out from their flanks.
-3. Restrict canopy to ±0.30 m from accepted axes, close small gaps with a 0.05 m-radius operation and fill holes.
-4. Remove long grass-coloured strips and split connected pieces at narrow necks.
-5. Drop pieces below 0.20 m², with an adaptive 0.05 m² minimum for small-plant blocks; simplify with a 0.02 m tolerance and inset outlines by 0.01 m.
-6. Emit `vineyard` polygons carrying the plot's `vineyard_id`.
-
-The network is a permissive filter in the shipped hybrid. Recorded results are approximately tied with rules alone, not evidence of a deep-learning accuracy improvement. Young vines, grassed rows, shadows, touching plants and misplaced plot boundaries remain failure cases. SAM 2.1 refinement and COCO RT-DETR waste detection were explored in research probes and are **not** called by the default pipeline.
-
-### 5. Derive inter-rows and tile-specific attributes
-
-[`rows.py`](backend/src/marcaj/rows.py) sorts neighbouring axes, removes stray axes and builds ground polygons between adjacent rows. Each lane is inset **0.30 m from both axes**, clipped against organizer passages/forbidden areas, and may extend up to 1.5 m at its ends to meet nearby passages. Ground geometry is derived from axes rather than learned segmentation.
-
-Rows/inter-rows are clipped to visible tile geometry while preserving IDs. Native pixels determine:
-
-- `row_structure`: `regular`, `disrupted` for a vegetation-free stretch of at least 5 m, or `unassessable` when sufficient evidence is absent. Long tile-edge stretches count too. This uses sampled greenness, not the final canopy polygons.
-- `interrow_cover`: `bare_soil` below 25% green pixels, `vegetation` above 75%, otherwise `mixed`; empty samples are `unassessable`.
-
-These are rule-derived annotation attributes, not health diagnoses. Fragments of one physical row can have different tile-specific attributes.
-
-### 6. Propose conservative waste boxes
-
-[`waste.py`](backend/src/marcaj/waste.py) currently examines **predicted inter-row ground** only. It compares native RGB with a local 2 m median background, groups white/coloured/dark anomalies, and measures size, brightness, colour, elongation and distance to rows.
-
-A hand-set verifier accepts selected bright neutral and saturated coloured blobs. Black blobs are rejected because shadows look similar. Accepted blobs become boxes, merge where touching and retain an inter-row block ID. Box area is not measured physical litter area.
-
-This scope misses possible litter outside inter-rows, including surrounding land allowed by the challenge. Pale stones, flowers, tubes and stakes remain confounders. Neither organizer example contains waste, so they cannot establish waste recall or a reliable waste F1. Older notes describe earlier site-wide/in-block versions; report current source and fresh outputs separately.
-
-### 7. Package once; correct in Marcaj
-
-[`predict.py`](backend/src/marcaj/predict.py) writes `data/generated/predictions.geojson` and `canopy_flags.csv`, a review list for long canopy pieces. These are proposals.
-
-[`cvat.py`](backend/src/marcaj/cvat.py) clips projected geometry to each tile and writes **CVAT for images 1.1** pixel shapes. [`package.py`](backend/src/marcaj/package.py) builds ZIPs with `annotations.xml` and unchanged GeoTIFFs under `images/`, below a conservative 88,000,000-byte budget. App-only `block`, `inspection` and `route` features are not uploaded.
-
-Every ZIP is reopened and checked for CRCs, complete tile coverage, exact labels/attributes, allowed values and in-tile shapes. Prediction features are packed by default; reference-only mode supports the two-tile import dry run. CVAT polygons have one ring, so holes are filled with a warning.
-
-Upload every part and confirm **311 files before publishing**. Pre-annotation import is a one-time pre-publication step. Correct challenge geometry in Marcaj and complete/submit every job, including genuinely empty frames. The lab's hand-drawn review marks are evaluation evidence; they are not copied into inference, model labels or uploads.
-
-After correction, rebuild from exported CVAT. `build_scene` tags imported annotations `source=reference`, explicit prediction additions `source=prediction`, and constraints `source=organizer`. **Use a corrected-only scene for final files.** Measurements/routing exclude explicitly tagged predictions. Raw predictions omit `source` on some classes, so using that file directly as a final scene bypasses the intended provenance boundary.
-
-### 8. Measure the corrected vineyard
-
-[`scene.py`](backend/src/marcaj/scene.py) produces total, block and row records:
-
-| Measurement | Calculation |
-|---|---|
-| Block count | Distinct non-empty `vineyard_id` values on corrected annotation classes |
-| Row count | Distinct global `row_id` values |
-| Row length | Sum of projected fragment lengths, grouped by ID |
-| Canopy area | Union of canopy polygons, avoiding double-counted overlap |
-| Inter-row area | Union of ground polygons |
-| Hectares | Square metres / 10,000 |
-
-Duplicate overlapping row fragments must be removed/reviewed before treating summed lengths as authoritative. [`export.py`](backend/src/marcaj/export.py) writes `measurements.csv` with explicit `level` values (`total`, `block`, `row`), blank non-applicable fields and rounding only at serialization.
-
-### 9. Generate app-only inspection points
-
-[`poi.py`](backend/src/marcaj/poi.py) groups fragments by global row ID and samples every **5 cm**. A sample is planted when canopy intersects its ±0.30 m row tube.
-
-- An interior canopy-free stretch of at least **5 m** becomes a `gap` candidate.
-- An unplanted row end compared with nearby planted rows may become a `planting` candidate.
-- Stretches with more than 20% hidden/no-data/deep-shadow samples are dropped.
-- Pixel greenness supplies doubt evidence: a gap green along most of its length may be a canopy miss.
-- Confidence is a visibility score reduced for green gaps, sparsely detected rows and row ends. **It is heuristic, not a calibrated probability.**
-
-Points carry IDs, gap endpoints, source tiles, imagery date, `status=new` and `challenge` eligibility. The midpoint is a target; endpoints guide additional walks. Satellite points have `challenge=false`. Persistent visit history, user pins and the planned point lifecycle are not implemented.
-
-Default output is `data/generated/work/poi/poi.geojson`. After correction, rerun with `--scene` pointing to the latest corrected scene. If reference rows are present, model predictions are excluded from sampling.
-
-### 10. Optional satellite triage
-
-[`sentinel.py`](backend/src/marcaj/sentinel.py) searches Earth Search for Sentinel-2 L2A before the configured survey date, 21 May 2025. It caches study-area windows, selects up to **three** clear dates at least four days apart, applies band scale/offset metadata and masks to SCL vegetation/bare-ground pixels.
-
-- **NDVI:** `(NIR − red) / (NIR + red)`, from 10 m bands.
-- **NDMI:** `(narrow NIR − SWIR) / (narrow NIR + SWIR)`, from 20 m bands; repeated onto the 10 m grid without adding detail.
-- Candidate zones stay at least 1.5 robust standard deviations below their plot's typical index on every selected date. Plot edges are inset 5 m; small plots may have insufficient interior pixels.
-- Drone row/canopy evidence decides whether the zone warrants an app point.
-
-The cached report uses **4 May, 29 April and 24 April 2025**: historical observations, not current monitoring. Low values may reflect floor cover, tillage, young vines or soil differences. They do not establish disease, water stress or a 5 m plant gap.
-
-Current implementation is an offline batch, not the planned on-demand service with one or two views per lot. Explicit per-plot quality statuses are missing, and zero selected scenes causes failure rather than `insufficient evidence`. `--no-satellite` keeps the drone-only workflow available.
-
-### 11. Plan and validate the inspection walk
-
-[`route.py`](backend/src/marcaj/route.py) plans in metres:
-
-1. Join corrected inter-rows and passages, subtract forbidden geometry, and erode inter-rows by 0.30 m as a margin.
-2. Build a **0.5 m graph**, with finer cell-coverage sampling and 16 movement directions; check intervening cells to reduce corner cutting.
-3. Attach each target to up to three approach cells within 1.6 m. Waste uses box centroids.
-4. Calculate pairwise paths with Dijkstra, form a nearest-neighbour tour, improve it with 2-opt/Or-opt, and reselect approach cells for the visiting order.
-5. Allow an expensive corridor outside lanes (up to 12 m away, 6× base cost), then drop stops/runs exceeding a default **1.2% outside budget** on eroded planning space. Record the dropped targets.
-6. Add walks toward gap endpoints, return to START, simplify by 0.20 m, round to millimetres and check the final line.
-
-[`routing.py`](backend/src/marcaj/routing.py) measures per segment, so retraced out-and-back sections count twice. Visits use actual distance to the line within 2 m. Start/end must be within 5 m of START; at most 2% of length may lie outside annotated inter-rows/passages.
-
-**Validator gap:** `legal` checks only that 2% limit. Forbidden and canopy crossing lengths are reported but do not invalidate it. Resolve this before claiming full compliance. Budget-expensive targets may be skipped; legal does not mean full coverage. Checking gap endpoints is not a formal proof that every point along a gap is covered.
-
-`marcaj-export` writes official `route.geojson`, `route_targets.csv`, and map alternatives for all targets and confidence cutoffs 0.5/0.7. Submission coordinates remain projected EPSG:32635 with the organizer's CRS member. Alternatives are separate tours, not segments to add together.
-
-### 12. Serve the app
-
-[`api.py`](backend/src/marcaj/api.py) serves `/health`, `/api/scene`, `/api/imagery/{z}/{x}/{y}.png`, and the built frontend. [`imagery.py`](backend/src/marcaj/imagery.py) renders map tiles from the source orthomosaic's overviews.
-
-The browser loads precomputed results; map clicks do not run inference. [`main.ts`](web/src/main.ts) and [`map-views.ts`](web/src/map-views.ts) provide per-field inspection, farm overview and satellite/cadastre layers. [`yield-view.ts`](web/src/yield-view.ts) provides **manual** harvest/grower-estimate records, saved in browser localStorage, with editing, removal/undo and CSV export. They are not detector output and do not change annotation measurements.
-
-Labour savings are conditional arithmetic: distance / walking speed + stop time, compared with user-entered usual duration and hourly cost. No measured savings study or automatic yield model is implemented.
-
-Current UI gaps: corrected CVAT supplies no `block` features for the field selector; whole-site routes lack the field ID required by the per-field view; confidence alternatives are all drawn without a selector; detailed annotation measurement tables are not rendered. The UI supports cadastral outlines, but the backend does not automatically attach them.
-
-## Install and run
-
-Requires Python 3.11–3.13, uv, Node.js 22+ and npm. Dependencies are locked in `backend/uv.lock` and `web/package-lock.json`. Torch lives in the historically named `sam` group; the detector needs it even though SAM is unused.
-
-Place the supplied package at `data/raw/marcaj-data.zip`, then:
+Retraining (from `backend/`; the shipped weights are run `v14_deep` on label snapshot `ff679923`, 6,000 steps in 834 s on MPS):
 
 ```sh
-# Repository root
-unzip data/raw/marcaj-data.zip -d data/raw/marcaj
+uv run --frozen --group sam python ../research/probes/canopy_net_labels.py      # rule labels -> data/generated/work/canopy_net/
+uv run --frozen --group sam python ../research/probes/canopy_net_train.py --name v14_deep --no-grass \
+    --gap-weight 5 --cut-reach 9 --jitter 0.2 --doubt 0.1 --depth 5 --steps 6000
+cp ../data/generated/work/canopy_net/runs/v14_deep.pt ../models/canopy_net.pt
+```
+
+`--labels` defaults to the newest label snapshot; pass `--labels ff679923` to train on the historical one if it is present.
+
+**Classical image processing and geometry (no training):**
+
+| Stage | Method |
+|---|---|
+| Plots and row axes ([`plots`](backend/src/marcaj/plots.py)) | Directional row energy on a 0.4 m grid ([`layers`](backend/src/marcaj/layers.py)): vine spacing (2.0-3.6 m) against orchard spacing. Per plot a row lattice (angle, spacing, phase), quadrilateral fit, row walk outward, 5 m merge, road rule. A second pass on a top-hat layer adds narrow young strips; cadastral parcels extend a plot only where the plot's own rows continue, and separate blocks at tracks |
+| Canopy ([`canopy`](backend/src/marcaj/canopy.py)) | 2G - R - B > 25 in pixel values inside a +/- 0.30 m tube of each twice re-fitted axis, weak stretches of a row at a lower threshold, 0.05 m closing, split at necks, verge-grass axes dropped, pieces of at least 0.2 m² (0.05 m² in young blocks and rows), 0.01 m inset |
+| Inter-rows and attributes ([`rows`](backend/src/marcaj/rows.py)) | Polygons between neighbouring axes, inset 0.30 m from each, extended up to 1.5 m onto passages. `row_structure`: `disrupted` for a vine-free stretch of 5 m or more; `interrow_cover`: green share under 25% `bare_soil`, over 75% `vegetation`, else `mixed`; `unassessable` without evidence |
+| Obstacles ([`obstacles`](backend/src/marcaj/obstacles.py)) | Tree crowns and roofs that survive a 2.2 m morphological opening on the mosaic |
+| Waste ([`waste`](backend/src/marcaj/waste.py)) | Colour anomalies against a 2 m median background inside predicted inter-rows (plus 2 m inside blocks), accepted by a hand-set verifier |
+| Inspection points ([`poi`](backend/src/marcaj/poi.py)) | Rows sampled every 5 cm; a canopy-free stretch of 5 m or more between planted parts is a `gap`, an unplanted row end next to planted neighbours is `planting` |
+| Route ([`route`](backend/src/marcaj/route.py)) | 0.5 m grid over inter-rows (eroded 0.3 m) and passages, 16-direction Dijkstra, nearest neighbour + 2-opt + Or-opt tour, 1.2% outside budget, checked by [`routing.check_route`](backend/src/marcaj/routing.py) |
+
+SAM 2.1 ([`sam.py`](backend/src/marcaj/sam.py), [`canopy_sam.py`](backend/src/marcaj/canopy_sam.py)) was tried in research and is not called by the pipeline.
+
+## Install
+
+Requires Python 3.11-3.13 (measured on 3.11.16), [uv](https://docs.astral.sh/uv/) 0.10+, Node.js 22.12+ and npm. Dependencies are pinned in `backend/uv.lock` and `web/package-lock.json`.
+
+```sh
 cd backend
-uv sync --frozen --group sam
-
-# Full pre-annotation; cold runs also build mosaic/layers
-uv run --frozen --group sam python -m marcaj.predict
-
-# Development scene and judge
-uv run --frozen marcaj-scene \
-  --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip \
-  --predictions ../data/generated/predictions.geojson
-uv run --frozen marcaj-judge
-
-# Prepare files only: these commands do not upload or publish
-uv run --frozen marcaj-pack \
-  --scene ../data/generated/scene.json --source reference \
-  --only siret3_r021_c012.tif,siret3_r006_c004.tif --output-dir ../output/dryrun
-uv run --frozen marcaj-pack --scene ../data/generated/predictions.geojson
-
-# Build and serve the development map
+uv sync --frozen --group sam      # torch for canopy_net is in the "sam" group
 cd ../web
 npm ci
-npm run build
-cd ../backend
-uv run --frozen uvicorn marcaj.api:app --host 127.0.0.1 --port 8000
+npm run build                     # typechecks, then writes web/dist
 ```
 
-Open [the local interface](http://127.0.0.1:8000). Frontend development uses `npm run dev` in `web/` on port 5173, proxying `/api` to port 8000. A scene is required; there is no fictional fallback.
+## Data
 
-`MARCAJ_DATA_DIR` selects the extracted package; `MARCAJ_SCENE_PATH` selects the scene for serving/export. Set these in the shell; `.env` is not loaded automatically. Cache/overlay paths remain under repository `data/`, so these variables do not isolate every artifact.
-
-### Final run after Marcaj correction
+Put the organizer package at `data/raw/marcaj-data.zip` and unzip it:
 
 ```sh
-# From backend/, using the submitted project's latest CVAT export
-uv run --frozen marcaj-scene --cvat ../data/marcaj-export.zip
-
-# Fresh candidates from that corrected-only scene
-uv run --frozen python -m marcaj.poi --scene ../data/generated/scene.json
-# Offline alternative: add --no-satellite
-
-# Measurements and route from the same corrected scene and fresh POIs
-uv run --frozen marcaj-export --output-dir .. \
-  --poi ../data/generated/work/poi/poi.geojson
+unzip data/raw/marcaj-data.zip -d data/raw/marcaj
 ```
 
-This is the implemented sequence, not a completed final-project run. Regenerate downstream artifacts after corrections, inspect crossings and target coverage, and resolve the review findings before relying on map/compliance flags. `lab.save()` overwrites the default scene with examples plus predictions; do not run it after building the final corrected scene.
+```text
+data/raw/marcaj/01_tiles/siret3_challenge_tiles_part{1..5}of5.zip   the 311 tiles
+data/raw/marcaj/02_route/{start,passages,forbidden,study_area}.geojson
+data/raw/marcaj/04_source/siret3_source_orthomosaic_EPSG4326.tif    map imagery only
+data/raw/marcaj/05_examples/siret3_examples_cvat.zip                the two annotated example tiles
+data/raw/marcaj/tiles/                           extracted on the first run, then read-only
+data/raw/external/cadastre/parcels_32635.geojson cadastral parcels, fetched once (run_all.sh does it)
+data/raw/external/sentinel/                      Sentinel-2 windows, cached by the first POI run
+data/generated/                                  caches and generated files
+```
 
-### Lab and model reproduction
+`tiles.load_tiles` extracts the tiles from the part ZIPs, checks every file's size and CRC against its ZIP entry on every run, rejects any other CRS, size or pixel grid, and makes the tiles read-only. Nothing writes into `data/raw/marcaj/tiles/`. `data/raw`, `data/generated` and `output` are git-ignored.
+
+## Run
+
+### One command
 
 ```sh
-# From backend/: retain Torch while adding notebook dependencies
-uv sync --frozen --group sam --group lab
-uv run --frozen --group sam --group lab jupyter lab ../research/lab.ipynb
+scripts/run_all.sh                         # automatic: tiles -> predictions -> CVAT ZIPs -> scene -> POIs -> route.geojson, measurements.csv
+scripts/run_all.sh data/marcaj_export.zip  # submission: the same from the corrected Marcaj CVAT export
 ```
 
-`Lab()` runs the full detector; `lab.run(...)` reruns with plot parameters; `lab.report()` evaluates; `lab.save()` writes predictions and a development scene. Cached preprocessing helps, but the current lab is not a 0.02-second rerun.
+The automatic form packs the predictions into the same CVAT 1.1 ZIPs Marcaj imports (`output/roundtrip/`) and reads them back, so it measures the uncorrected pre-annotations. The submitted files come from the second form: the Marcaj export replaces the ZIPs. Both write `route.geojson`, `route_targets.csv` and `measurements.csv` to the repository root, the scene to `data/generated/scene.json` (what the app serves) and the client routes to `data/generated/routes.geojson`.
 
-Use the repository checkpoint for inference reproduction. Optional training uses `canopy_net_labels.py` and `canopy_net_train.py`. The shipped run was:
+| Variable | Default | Effect |
+|---|---|---|
+| `OUT` | repository root | where the three submission files go |
+| `SCENE` | `data/generated/scene.json` | the scene file written and exported |
+| `NO_SATELLITE` | unset | `1` skips the Sentinel-2 layer (the route and measurements do not use it) |
+| `MARCAJ_DATA_DIR` | `data/raw/marcaj` | the unzipped organizer package |
+
+### Step by step
+
+What the script runs, from `backend/`:
 
 ```sh
-uv run --frozen --group sam python ../research/probes/canopy_net_labels.py
-uv run --frozen --group sam python ../research/probes/canopy_net_train.py \
-  --name v14_deep --labels ff679923 --no-grass --gap-weight 5 \
-  --cut-reach 9 --jitter 0.2 --doubt 0.1 --depth 5 --steps 6000
+uv run --frozen python -m marcaj.cadastre --fetch       # once, if data/raw/external/cadastre/parcels_32635.geojson is missing
+uv run --frozen --group sam python -m marcaj.predict    # data/generated/predictions.geojson, canopy_flags.csv
+uv run --frozen marcaj-pack --scene ../data/generated/predictions.geojson   # output/upload/: ZIPs under 88,000,000 bytes, verified
+# Marcaj: upload every part, check 311 files, publish, correct, submit every job, export CVAT 1.1
+uv run --frozen python -m marcaj.obstacles              # obstacles from the predicted blocks, for poi
+uv run --frozen marcaj-scene --cvat ../data/marcaj_export.zip             # data/generated/scene.json
+uv run --frozen python -m marcaj.poi --scene ../data/generated/scene.json # add --no-satellite to stay offline
+uv run --frozen marcaj-export --output-dir .. --poi ../data/generated/work/poi/poi.geojson
 ```
 
-`ff679923` is the historical teacher snapshot recorded in the checkpoint. Generated training files are ignored by Git. A fresh label run uses the current canopy-source hash and may create another version; it does not automatically reproduce that historical teacher. Archive matching snapshot, plots and metadata for exact training reproduction. Never use diagnostic hand-annotated training weights for submission.
+`marcaj-export` refuses to write a route that would score 0: more than 2% of its length outside inter-rows and passages, not closed within 5 m of START, or crossing forbidden zones or mature canopy. Targets it cannot reach within its 1.2% outside budget are listed in `route_targets.csv` with the reason. The tour is a heuristic, not a proven shortest route.
 
-## Evaluation and checked state
+### Marcaj rules the workflow keeps
 
-The review reran the judge on the **stored development scene**:
+- Pre-annotations are imported once, before Publish: upload every part, check that Marcaj shows 311 files, then publish.
+- Dry run first with two example tiles: `marcaj-scene --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip`, then `marcaj-pack --scene ../data/generated/scene.json --source reference --only siret3_r021_c012.tif,siret3_r006_c004.tif --output-dir ../output/dryrun`.
+- Manual correction happens only in Marcaj. Verdicts recorded in the research tools are evaluation evidence: prediction code and `marcaj-pack` never read `data/review/`.
+- Every scene feature carries `source`: `reference` (CVAT input), `organizer` (START, passages, forbidden zones, study area, tiles) or `prediction`. Measurements and the route ignore `prediction`.
 
-| Quantity | Result | Interpretation |
-|---|---:|---|
-| Canopy composite | 0.854 | 60% union IoU + 40% instance F1 on two tuned examples |
-| Row-axis F1 | 0.970 | 0.4 m tolerance, at least 80% mutual axis coverage |
-| Attribute score | 0.974 | Local combined accuracy/macro-F1 |
-| Grouping | 1.000 | Matched objects on just two example blocks |
-| Measurement agreement | 0.890 | Tolerance-based count/area/length score |
-| Available local points | 44.88 / 50 | Route/engineering excluded; waste unscored |
-| Plot F1 at IoU ≥ 0.5 | north 0.811; south 0.647 | Team outlines; later experiments inspected both halves |
-
-The saved scene contains **36 candidate plots, 1,776 row fragments, 1,727 inter-row fragments, 13,279 canopy pieces and 29 old waste boxes**. Fragment counts are not distinct physical rows. These stored counts are not the latest-source result. A standalone waste file contains a different, two-box result.
-
-The fresh review run produced **36 plots, 13,518 canopy pieces, 1,776 row fragments, 1,727 inter-row fragments and 2 waste boxes**, with the same 44.88/50 local regression score. Its canopy union IoU was 0.8191 and instance F1 0.9063. Prediction plus scene construction/judging took **622.5 seconds on the CPU path with four Torch threads and cached preprocessing**; peak memory was not measured. Outputs were kept in a temporary directory, so they did not replace the saved app scene.
-
-The saved all-target development route is approximately **9,066 m**, visiting **125/193 local targets (64.8%)**, with 68 dropped by its budget. This is coverage on assumed predicted geometry, not the hidden organizer target set. Its recorded 0.564% outside share belongs to that development geometry; against the current scene's reference annotations it is approximately 48.5% outside. Regenerate from a full corrected export.
-
-Earlier notes report a 215-second full prediction with 3.9 GB peak memory on an M4 Pro and 834-second training on Apple MPS. Those are **historical run records**, not a current-source benchmark. The dated review records this review's fresh run and verification limits.
-
-Checks:
+## Web app
 
 ```sh
-cd backend
-uv run --frozen python -m compileall -q src
-uv run --frozen marcaj-judge
-# Separate directory preserves the existing upload set
-uv run --frozen marcaj-pack --scene ../data/generated/predictions.geojson \
-  --output-dir ../output/recheck
-cd ../web
-npm run build
+cd web && npm run build
+cd ../backend && uv run --frozen uvicorn marcaj.api:app --host 127.0.0.1 --port 8000
 ```
 
-Compile/build passed; all 311 tiles and existing ZIPs passed local integrity checks; all 750 example objects round-tripped without geometry change. Local ZIP validation does not establish a successful Marcaj import. No final root `route.geojson` or `measurements.csv` existed at review time.
+Open `http://127.0.0.1:8000` (inspector) or `http://127.0.0.1:8000/?role=farmer`. The app needs `data/generated/scene.json` (from `run_all.sh` or `marcaj-scene`).
 
-## Files, dependencies and disclosure
+- Map: drone imagery rendered from the source orthomosaic, fields with `vineyard_id`, rows with `row_id`, canopies, inter-rows, waste and inspection points.
+- Measurements: site totals, each field, and a sortable row table; the same numbers as `measurements.csv`. A field not yet annotated in Marcaj is measured from the predictions and marked as a model estimate.
+- Routes: the site route and one route per field, per confidence cutoff (all, >= 0.5, >= 0.7), with length and visited targets. "Plan a walk" sets start and end on the map for the whole farm or one field, calls `POST /api/route`, and downloads the result as an official-format `route.geojson`.
+- Roles: the inspector sees every field, point and score; a farmer (one field is one farmer) sees waste and missing canopy, marks points in progress, fixed or false positive, and plans a walk over the open points; the inspector approves or rejects the claims. There is no authentication (single-site demo).
+- Layers: Sentinel-2 NDVI and NDMI before the flight, cadastral parcels. A yield and harvest page keeps manual records in the browser.
 
-| Location | Purpose |
+| Endpoint | Returns |
 |---|---|
-| `backend/src/marcaj/` | Detector, geometry, CVAT, measurements, routing and map API |
-| `web/` | Client app; no annotation review tools |
-| `research/lab.ipynb`, `marcaj.lab`, `marcaj.review` | Evaluation and verdict recording |
-| `research/probes/`, `research/notes/` | Parameter trials, diagnostics, contact sheets and historical results, not additional default pipeline stages |
-| `models/canopy_net.pt` | Shipped U-Net checkpoint |
-| `data/raw/`, `data/generated/`, `output/` | Ignored local inputs, caches and artifacts |
-| `data/review/verdicts.json` | Evaluation evidence, not upload geometry or training labels |
+| `GET /health` | `{"status": "ok"}` |
+| `GET /api/scene` | the scene as a lon/lat display copy, measurements, routes |
+| `GET /api/imagery/{z}/{x}/{y}.png` | map tiles from the source orthomosaic |
+| `POST /api/route` | a route on request: `start`, `end` ([lon, lat] or {easting, northing}), `scope` (site or a `vineyard_id`), `min_confidence`, `hops`, `kinds`, `open_only`; 422 for invalid input, 413 over 2 KB |
+| `POST /api/route/geojson` | the same route in the `route.geojson` format (EPSG:32635) |
+| `GET /api/points`, `POST /api/points/{id}/status` | point statuses (append-only log in `data/app/point_status.json`) and farmer scores |
 
-Default prediction uses local code/weights with **no LLM inference calls or paid inference APIs**. Optional satellite processing uses anonymous Earth Search/STAC and raster reads; the basemap uses OpenStreetMap tiles. Paid development tools/coding assistants, if used, should be disclosed separately: source inspection cannot establish account billing or full development history.
+At start the API builds or loads two route plans (with and without row hops, about 2.5 min each when cold, cached in `data/generated/work/route/cache/`). After changing Python code, restart the server. Front-end development: `npm run dev` in `web/` (port 5173, proxies `/api` to port 8000).
 
-There is no authentication, database, shared record synchronization or automatic deployment. No public deployed interface was verified in this review.
+### Research tools
 
-Project attribution: Sireț3 imagery, CC BY 4.0, 3DATA COLLECT / OpenAerialMap; organizer route data and basemap © OpenStreetMap contributors. Optional cadastre research credits I.P. Cadastrul Bunurilor Imobile and remains disabled by default.
+Kept out of the client:
 
-Further reading: [specification](docs/SPEC.md), [organizer playbook](docs/ORGANIZER_PLAYBOOK.md), [architecture research](docs/ARCHITECTURE_RESEARCH_2026-09-25.md), [inspection product plan](docs/INSPECTION_PRODUCT.md), [research evidence](docs/RESEARCH.md), [historical status](docs/STATUS.md), [EU alignment and business plan](docs/EU_ALIGNMENT.md). These include plans and earlier snapshots; use current source and the dated review for implementation claims.
+- Lab notebook ([`research/lab.ipynb`](research/lab.ipynb), [`marcaj.lab`](backend/src/marcaj/lab.py)): `uv sync --frozen --group sam --group lab`, then `uv run --frozen --group sam --group lab jupyter lab ../research/lab.ipynb`. `Lab()` runs the prediction, `lab.run(...)` reruns with other plot parameters, `lab.report()` judges, `lab.save()` writes predictions and a development scene (it overwrites `data/generated/scene.json`).
+- Review tool ([`research/review/`](research/review/)): `uv run --frozen python ../research/review/build.py`, then `uv run --frozen python ../research/review/server.py` on `http://127.0.0.1:8010`. Verdicts go to `data/review/verdicts.json`.
+- Local judge: `uv run --frozen marcaj-judge [--json report.json]` scores the predictions in `data/generated/scene.json` against the example tiles (build that scene with `marcaj-scene --cvat ../data/raw/marcaj/05_examples/siret3_examples_cvat.zip --predictions ../data/generated/predictions.geojson`).
+- [`research/probes/`](research/probes/) and [`research/notes/`](research/notes/): experiments and their results, not pipeline stages.
+
+## Docker
+
+```sh
+docker build -t agrocontrol .
+
+# the app on http://127.0.0.1:8000, serving data/generated/scene.json
+docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" agrocontrol
+
+# the pipeline; the submission files land in ./output/
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output \
+    agrocontrol /app/scripts/run_all.sh                                   # automatic
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output \
+    agrocontrol /app/scripts/run_all.sh /app/data/marcaj_export.zip      # from the Marcaj export
+```
+
+The image is Python 3.11 slim with `uv sync --frozen --group sam`, the web client built in a Node 22 stage, and `models/canopy_net.pt`. The data is not in the image: mount `data/`. The locked Linux PyTorch wheel brings its CUDA runtime, so the image is several GB. In the container PyTorch runs on CPU (no MPS), so the prediction takes longer than the table below; give Docker at least 6 GB of memory.
+
+## Timing and hardware
+
+> Measured on 26 Sep 2026, pipeline v4.5 (route rows on the v4 prediction).
+
+Apple M4 Pro (12 cores), 24 GB RAM, macOS 26.6, Python 3.11.16, PyTorch 2.14.0 on Apple MPS.
+
+| Stage | Command | Wall time | Peak memory |
+|---|---|---|---|
+| 0.2 m mosaic of the 311 tiles (cold run only) | inside `marcaj.predict` | 11 s | |
+| 0.4 m plot layers (cold run only; a top-hat variant is cached beside them) | inside `marcaj.predict` | 17 s | |
+| Full prediction, 311 tiles | `python -m marcaj.predict` | 285 s (287 s process) | 3.85 GB RSS |
+| Inspection points | `python -m marcaj.poi` | 13 s | 0.6 GB |
+| Route export: official route, site and per-field routes at 3 cutoffs, with and without row hops | `marcaj-export` | 390-407 s | 2.5-3.4 GB |
+| One route plan, cold | API warm-up | 130-150 s | |
+| Route on request, warm plan | `POST /api/route` | 0.3-3.1 s | |
+
+`scripts/run_all.sh` in automatic mode takes about 12 minutes on this machine, summed from the rows above plus packing, obstacles and scene building (not timed as one run). The v4.5 prediction produced 36 blocks, 1,900 row pieces, 1,862 inter-row pieces, 14,594 canopies and 74 waste boxes. Waste runs in 2 worker processes; canopy, attributes and waste work tile by tile, and the site-wide plot search runs on the 0.2 m mosaic (64 times fewer pixels than the tiles).
+
+## Evaluation
+
+`marcaj-judge` applies the organizers' formulas to the two example tiles the organizers annotated (`siret3_r006_c004`, `siret3_r021_c012`):
+
+| Criterion (points) | Score |
+|---|---|
+| Canopy (25): 0.6 x IoU + 0.4 x F1 | 0.851 (IoU 0.818, F1 0.902) |
+| Row axes (8) | 0.970 |
+| Attributes (5) | 0.974 |
+| Grouping by `vineyard_id` (2) | 1.000 |
+| Counts and measurements (10) | 0.895 |
+| **Points, of the 50 the judge covers** | **44.87** |
+
+These tiles were used while tuning, so this is a sanity check, not a holdout estimate. Waste (10), route (25) and engineering (15) are not scored locally; the examples contain no waste. The judge passed its controls: an exact copy of the reference scores 50/50, rows shifted 0.35 m sideways score 1.0 and at 0.6 m score 0.0, half the canopies dropped give 0.576, flipped attributes give 0, and one block for everything gives grouping 0.52.
+
+## Outputs and formats
+
+All geometry is in EPSG:32635 metres. The map receives a lon/lat display copy that is never measured.
+
+- `route.geojson`: a FeatureCollection with the organizers' `crs` member (`urn:ogc:def:crs:EPSG::32635`) and one LineString feature with `length_m`.
+- `measurements.csv`: `level,vineyard_id,row_id,block_count,row_count,row_length_m,canopy_area_m2,canopy_area_ha,interrow_area_m2,interrow_area_ha`, with `level` `total`, `block` or `row`. Canopy and inter-row areas are unions; row length sums the pieces of each `row_id`; values are rounded to 3 decimals only when written.
+- `route_targets.csv`: per target `id`, label, `status` (`visited`, `over_budget`, `unreachable`), distance to the route and reason.
+- Upload ZIPs: CVAT for images 1.1 (`annotations.xml` plus the unchanged tiles under `images/`).
+
+## Data sources and licences
+
+| Source | Terms |
+|---|---|
+| Sireț3 imagery (organizer tiles and source orthomosaic) | CC BY 4.0, 3DATA COLLECT / OpenAerialMap, contributors to the Open Imagery Network |
+| Organizer route data | contains information from OpenStreetMap, © OpenStreetMap contributors, ODbL |
+| Client basemap | © OpenStreetMap contributors |
+| Sentinel-2 L2A, Earth Search `sentinel-2-c1-l2a` (anonymous access) | Contains modified Copernicus Sentinel data 2025 |
+| Cadastral parcels, public WMS of I.P. Cadastrul Bunurilor Imobile (snapshot of 26 Sep 2026) | credit "Cadastru: I.P. Cadastrul Bunurilor Imobile"; the service lists no fees or access constraints, and we found no explicit reuse licence |
+| `canopy_net` weights | our own, trained from scratch on the organizer tiles |
+
+## Paid APIs and LLMs
+
+- Claude Code (Anthropic) and Codex (OpenAI) were used as coding assistants during development. Codex also ran one web research sweep of methods and datasets ([prompt](research/2026-09-25-codex-research-prompt.md), [result](research/2026-09-25-codex-research-sweep.md)).
+- No LLM and no paid API runs in the prediction pipeline or the app. `backend/src` and `web/src` contain no LLM SDK, API key or LLM endpoint. Runtime network use is the anonymous Sentinel-2 search and window reads (cached, optional), the one-time cadastre fetch, and OpenStreetMap basemap tiles loaded by the browser.
+- `transformers` in the `sam` group serves only the SAM 2.1 research modules (image segmentation, not a language model), which the pipeline does not call.
+
+## Repository
+
+| Path | Holds |
+|---|---|
+| `backend/src/marcaj/` | the Python package: pipeline, CVAT converter and packer, measurements, POIs, route, API |
+| `web/` | the client (Vite, TypeScript, Leaflet); no annotation tooling |
+| `models/canopy_net.pt` | U-Net weights |
+| `scripts/run_all.sh` | tiles to `route.geojson` and `measurements.csv` |
+| `research/` | lab notebook, review tool, probes and notes |
+| `data/review/verdicts.json` | team verdicts, evaluation evidence only |
+| `docs/` | [specification](docs/SPEC.md), [status](docs/STATUS.md), [organizer playbook](docs/ORGANIZER_PLAYBOOK.md), [research](docs/RESEARCH.md), [inspection product](docs/INSPECTION_PRODUCT.md), [architecture research](docs/ARCHITECTURE_RESEARCH_2026-09-25.md), [code review of 26 Sep](docs/CODE_REVIEW_2026-09-26.md), [EU alignment](docs/EU_ALIGNMENT.md) |
+
+Checks: `uv run --frozen python -m compileall -q src` (from `backend/`), `npm run build` (typechecks `web/`), the packer's self-verification, and `marcaj-judge`.

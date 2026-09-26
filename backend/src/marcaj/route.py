@@ -4,7 +4,7 @@ passable space (inter-rows plus passages, minus forbidden zones), in EPSG:32635.
 The route plans on `robust_space`, the scene's inter-rows eroded by 0.3 m plus the passages, rasterised on a 0.5 m
 grid with each cell's passable cover taken from a 3x finer raster. Cells outside it but within `CORRIDOR_M` stay
 walkable at `OUTSIDE_WEIGHT` times the cost unless forbidden, on a row strip (axis ± 0.3 m, the trellis), on a
-canopy or on the imagery's no-data margin: that is how it reaches blocks behind a bare headland and crosses between the two passage components. Inside
+canopy, on a building or on the imagery's no-data margin: that is how it reaches blocks behind a bare headland and crosses between the two passage components. Inside
 passable space a step costs up to twice as much within `MARGIN_M` of the edge, so the route keeps to lane centres.
 Steps are 16-directional (length error at most 2.7%) with no corner cutting past a blocked cell, so the route
 cannot slip through a 1-cell row strip.
@@ -52,7 +52,10 @@ SAMPLES = 8
 CHUNK = 1 << 20
 MARGIN_M = 0.75
 EDGE_PENALTY = 1.0
-OUTSIDE_WEIGHT = 6.0
+# a metre outside passable space costs as much as this many inside: high, so the route takes long detours through lanes
+# and passages rather than spend outside budget. Site all-POI route on v4.5 (177 targets), budget 1.2% robust:
+# weight 20: 9,270 m, 120 visited; 40: 10,068 m, 129; 60: 10,492 m, 134 (1.18% robust, 0.60% plain); 100: 10,483 m, 132
+OUTSIDE_WEIGHT = 60.0
 CORRIDOR_M = 12.0
 ATTACH_M = 1.75  # + SIMPLIFY_M stays inside the 2 m visit radius
 SIMPLIFY_M = 0.2
@@ -63,6 +66,10 @@ MAX_CANDIDATES = 3
 DETOUR_LIMIT = 80.0
 UNDERCOUNT = 1.3  # sampled raster outside metres of an unmeasured leg, times this, against exact: 78 / 63 on the site
 MAX_ROUNDS = 8
+# a target in a block (vineyard_id) the route does not reach yet counts as 1 + BLOCK_VALUE targets, in `_add`'s targets
+# per outside metre and in `_best_routes`' choice, so the outside budget goes to one visit of every block with a gap or
+# waste before a further target of a block already visited; waste without a vineyard_id never counts as a block
+BLOCK_VALUE = 3.0
 # Row hops: a walker may step across a vine row where it has no canopy, instead of going round the row end. A hop
 # joins the two lane cells HOP_REACH_M either side of the row axis, where a HOP_WIDTH_M wide corridor along the row
 # holds no canopy (and no forbidden zone), every HOP_STEP_M along each row. It costs its metres (outside passable
@@ -80,7 +87,7 @@ HOP_MIN_STEP_M = 1.3  # longer than any grid step (1.12 m): a step this long in 
 SNAP_M = 25.0  # a requested start or end snaps to the nearest passable cell within this distance
 OPEN_LINK = 1e6  # the dummy END -> START leg of an open route costs -OPEN_LINK, so every tour move keeps it
 PLAN_CACHE = REPO_ROOT / "data" / "generated" / "work" / "route" / "cache"
-PLAN_VERSION = 6  # bump when the grid, hops or matrices change, so cached plans are rebuilt
+PLAN_VERSION = 7  # bump when the grid, hops or matrices change, so cached plans are rebuilt
 DEV_WORLD_SHARE = 0.25
 PLAN_FILES = 3
 # (drow, dcol, cells the step passes through that must be walkable too)
@@ -274,7 +281,11 @@ def build_grid(features: list[dict[str, Any]], space=None, hop_penalty: float | 
         loose[touching] = shapely.area(shapely.intersection(canopies[touching], space)) >= 0.5 * shapely.area(canopies[touching])
     canopy = burn(list(canopies[loose]), True)
     obstacles |= burn(list(canopies), True)
-    blocked = burn(_geometries(features, "forbidden"), True) | canopy | (obstacles & ~passable)
+    # nobody walks through a building (marcaj.obstacles), even outside passable space: on v4.5 the site route crossed a
+    # 66 m2 shed for 43 m of its outside metres
+    buildings = [shape(item["geometry"]) for item in features if item["properties"].get("label") == "obstacle"
+                 and item["properties"].get("obstacle_type") == "building" and is_scored(item)]
+    blocked = burn(_geometries(features, "forbidden") + buildings, True) | canopy | (obstacles & ~passable)
     corridor = (ndimage.distance_transform_edt(~passable) * GRID_M <= CORRIDOR_M) & burn([area]) & ~blocked & _visible(transform, shape_)
     walkable = (passable & ~canopy) | corridor
     margin = ndimage.distance_transform_edt(passable) * GRID_M - GRID_M / 2
@@ -705,6 +716,8 @@ def _add(plan: Plan, tour: np.ndarray, pool: list[int], budget: float, outside: 
     Returns the tour and the groups added."""
     cost, length, groups = plan.cost, plan.length, plan.groups
     pool, added = list(pool), []
+    block = [(plan.targets[target].get("vineyard_id") or "") if target >= 0 else "" for target in plan.group_target]
+    covered = {block[int(plan.group_of_stop[stop])] for stop in tour} | {""}
     after = np.roll(tour, -1)
     route_length, route_outside = float(length[tour, after].sum()), float(outside[tour, after].sum())
     while pool:
@@ -737,7 +750,7 @@ def _add(plan: Plan, tour: np.ndarray, pool: list[int], budget: float, outside: 
                 new_outside = np.where(via_a < extra, out_a, extra_outside)
                 new_outside = np.where((via_b < np.minimum(via_a, extra)), out_b, new_outside)
                 freed = np.unique(owner[(new_outside <= 0.05) & (owner != owner[i])]).size
-                ratio = (1 + freed) / max(extra_outside[i], 0.05)
+                ratio = (1 + freed + BLOCK_VALUE * (block[pool[owner[i]]] not in covered)) / max(extra_outside[i], 0.05)
                 if ratio > best_ratio:
                     best_ratio, pick = ratio, int(i)
         k = int(edge[pick])
@@ -746,6 +759,7 @@ def _add(plan: Plan, tour: np.ndarray, pool: list[int], budget: float, outside: 
         route_outside += float(extra_outside[pick])
         group = pool.pop(int(owner[pick]))
         added.append(group)
+        covered.add(block[group])
     return tour, added
 
 
@@ -928,6 +942,11 @@ def _best_routes(prepared: Plan, includes: list[set[int]], budget: float) -> lis
     targets as any other set's route does."""
     targets = prepared.targets
 
+    def value(line: LineString, include: set[int]) -> float:
+        """Targets visited plus BLOCK_VALUE per block (vineyard_id) with at least one of them visited."""
+        seen = [k for k in include if line.distance(targets[k]["point"]) <= VISIT_RADIUS_M]
+        return len(seen) + BLOCK_VALUE * len({targets[k].get("vineyard_id") or "" for k in seen} - {""})
+
     def checked(index: int, line: LineString, status: dict[int, str], report: dict[str, Any], borrowed: bool = False) -> tuple:
         line = LineString(np.round(np.asarray(line.coords), 3))
         if borrowed:  # another set's line: its unvisited targets of this set were never offered to it
@@ -938,7 +957,7 @@ def _best_routes(prepared: Plan, includes: list[set[int]], budget: float) -> lis
         report["robust_outside_share"] = report["robust_outside_m"] / line.length
         rows = _target_rows(line, targets, includes[index], status, prepared, report["tour"])
         fits = report["legal"] and report["closed"] and report["robust_outside_share"] <= budget + 1e-9
-        return (fits, report["visited"], -line.length), line, rows, report
+        return (fits, value(line, includes[index]), -line.length), line, rows, report
 
     best, solved = [], {}
     for i, include in enumerate(includes):
@@ -952,7 +971,7 @@ def _best_routes(prepared: Plan, includes: list[set[int]], budget: float) -> lis
         improved = False
         for i, j in ((i, j) for i in range(len(includes)) for j in range(len(includes)) if i != j and includes[i] != includes[j]):
             other = best[j]
-            reach = sum(other[1].distance(targets[k]["point"]) <= VISIT_RADIUS_M for k in includes[i])
+            reach = value(other[1], includes[i])
             if not other[0][0] or reach < best[i][0][1] or (i, j, version[j]) in tried:
                 continue
             tried.add((i, j, version[j]))
@@ -1012,7 +1031,7 @@ def planning_features(scene: dict[str, Any]) -> tuple[list[dict[str, Any]], str]
 def _plan_key(token: str, targets: list[dict[str, Any]], hop_penalty: float | None, young_penalty: float | None) -> str:
     listed = [(item["id"], round(item["point"].x, 3), round(item["point"].y, 3), [(round(end.x, 3), round(end.y, 3)) for end in item.get("ends", ())])
               for item in targets]
-    return hashlib.sha1(json.dumps([PLAN_VERSION, HOP_OUTSIDE_WEIGHT, token, hop_penalty, young_penalty, listed]).encode()).hexdigest()[:16]
+    return hashlib.sha1(json.dumps([PLAN_VERSION, OUTSIDE_WEIGHT, HOP_OUTSIDE_WEIGHT, token, hop_penalty, young_penalty, listed]).encode()).hexdigest()[:16]
 
 
 def cached_plan(features: list[dict[str, Any]], targets: list[dict[str, Any]], token: str, hop_penalty: float | None = HOP_PENALTY_M,

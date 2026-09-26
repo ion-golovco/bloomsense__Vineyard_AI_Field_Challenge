@@ -69,7 +69,8 @@ KINDS = ("white", "colour", "black")
 
 @dataclass(frozen=True)
 class WasteParams:
-    scope: str = "site"            # "site": the whole tile; "interrow": the predicted inter-rows only (the 10:20 rule)
+    scope: str = "interrow"        # "interrow": the predicted inter-rows plus margin_m inside the blocks (the user, 20:30); "site": the whole tile
+    margin_m: float = 2.0          # scope "interrow": blobs inside a predicted block within this of an inter-row count too (row ends, canopy strips); every in-block waste label lies within 2 m of one
     bg_m: float = 2.0              # median window for the local background
     white_min: float = 170.0       # darkest channel of a white pixel
     white_contrast: float = 40.0   # luminance over the background
@@ -95,6 +96,15 @@ class WasteParams:
     small_dev: float = 100.0
     row_m: float = 0.55            # white blobs nearer a row axis are tubes, stakes or posts: the small tier and everywhere outside the inter-rows
     small_min_width_m: float = 0.03
+    # pile tier: heaps of pale stones or dusty sheeting of >= 0.15 m2 are dimmer and more tinted than the scraps
+    # (luminance 208-222, chroma 24-31) but hold a solid core; pale soil patches that size are dull (distance < 110)
+    pile_area_m2: tuple[float, float] = (0.15, 1.5)
+    pile_lum: float = 208.0
+    pile_chroma: float = 32.0
+    pile_dev: float = 110.0
+    pile_min_width_m: float = 0.10
+    pile_row_m: float = 0.7
+    pile_hue_max: float = 50.0     # stone and soil tan (hue 24-51); silvery shrubs and dry grass at that brightness are greener (55-106)
     colour_area_m2: float = 0.02
     colour_min_chroma: float = 80.0
     colour_dev: float = 100.0
@@ -250,6 +260,13 @@ def vineyard_id(geometry: Any, blocks: list[tuple[Any, str]], reach_m: float = 1
     return name if distance <= reach_m else ""
 
 
+def zone(interrow_polygons: list[Any], blocks: list[Any], margin_m: float) -> Any:
+    """Scope "interrow": the inter-rows, plus the parts of the predicted blocks within `margin_m` of one (row ends,
+    canopy strips, piles straddling an inter-row edge)."""
+    union = unary_union(interrow_polygons)
+    return union.union(union.buffer(margin_m).intersection(unary_union(blocks))) if margin_m > 0 and blocks else union
+
+
 def _tile_context(rgb: np.ndarray, layers: dict[str, np.ndarray], valid: np.ndarray, params: WasteParams) -> dict[str, np.ndarray]:
     any_mask = np.logical_or.reduce([layers[kind] for kind in KINDS])
     density = ndimage.uniform_filter(_coarse(any_mask.astype(np.float32)), size=int(3.0 / (PIXEL_M * BG_FACTOR)) | 1, mode="constant")
@@ -278,11 +295,16 @@ def site_tile_candidates(tile: Tile, context: Context, params: WasteParams = Was
              if hits else np.zeros((TILE_PX, TILE_PX), np.int32))
     layers = evidence(rgb, valid, params)
     found = [{**c, "location": "interrow"} for c in _blobs(tile, rgb, layers, owner > 0, params, owner, context.interrows)] if hits else []
-    if params.scope == "site":
-        rest = _blobs(tile, rgb, layers, valid & (owner == 0), params, context=_tile_context(rgb, layers, valid, params), min_m2=params.rest_min_m2)
+    near_blocks = [(p, name) for p, name in context.blocks if p.intersects(bounds.buffer(params.reach_m + 3))]
+    rest_mask = valid & (owner == 0)
+    if params.scope != "site":
+        margin = zone([p for _, p in hits], [p for p, _ in near_blocks], params.margin_m).intersection(bounds)
+        rest_mask &= (rasterize([margin], out_shape=(TILE_PX, TILE_PX), transform=transform, dtype="uint8") > 0
+                      if params.margin_m > 0 and not margin.is_empty else False)
+    if rest_mask.any():
+        rest = _blobs(tile, rgb, layers, rest_mask, params, context=_tile_context(rgb, layers, valid, params), min_m2=params.rest_min_m2)
         found += [{**c, "location": "rest"} for c in rest]
     _row_distance(found, [row for row in context.rows if row.intersects(bounds.buffer(3.0))])
-    near_blocks = [(p, name) for p, name in context.blocks if p.intersects(bounds.buffer(params.reach_m + 3))]
     forbidden = context.forbidden.intersection(bounds.buffer(params.building_m + 3))
     for c in found:
         geometry = box(*c["box"])
@@ -301,15 +323,23 @@ def accept(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
     if c.get("location", "interrow") != "interrow":
         return accept_rest(c, params)
     if c["kind"] == "white":
-        strict = (c["area_m2"] >= params.area_m2[0] and c["width_m"] >= params.min_width_m and c["lum"] >= params.white_lum
-                  and c["chroma"] <= params.white_chroma and c["dev"] >= params.white_dev and c["row_m"] >= params.white_row_m)
-        small = (params.small_area_m2[0] <= c["area_m2"] <= params.small_area_m2[1] and c["width_m"] >= params.small_min_width_m
-                 and c["lum"] >= params.small_lum and c["chroma"] <= params.small_chroma and c["dev"] >= params.small_dev
-                 and c["row_m"] >= params.row_m)
-        return strict or small
+        return _white(c, params)
     if c["kind"] == "colour":
         return c["area_m2"] >= params.colour_area_m2 and c["chroma"] >= params.colour_min_chroma and c["dev"] >= params.colour_dev
     return False
+
+
+def _white(c: dict[str, Any], params: WasteParams, pile: bool = True) -> bool:
+    """The inter-row white tiers: strict, small bright and (with `pile`) pale piles."""
+    strict = (c["area_m2"] >= params.area_m2[0] and c["width_m"] >= params.min_width_m and c["lum"] >= params.white_lum
+              and c["chroma"] <= params.white_chroma and c["dev"] >= params.white_dev and c["row_m"] >= params.white_row_m)
+    small = (params.small_area_m2[0] <= c["area_m2"] <= params.small_area_m2[1] and c["width_m"] >= params.small_min_width_m
+             and c["lum"] >= params.small_lum and c["chroma"] <= params.small_chroma and c["dev"] >= params.small_dev
+             and c["row_m"] >= params.row_m)
+    pile_ok = (params.pile_area_m2[0] <= c["area_m2"] <= params.pile_area_m2[1] and c["width_m"] >= params.pile_min_width_m
+               and c["lum"] >= params.pile_lum and c["chroma"] <= params.pile_chroma and c["dev"] >= params.pile_dev
+               and c["row_m"] >= params.pile_row_m and c["hue"] <= params.pile_hue_max)
+    return strict or small or (pile and pile_ok)
 
 
 def accept_rest(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
@@ -317,6 +347,11 @@ def accept_rest(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
     pale structures, of buildings and of row axes (module docstring, step 3)."""
     area = c["area_m2"]
     near = c["location"] in ("block", "headland")
+    # in a block (row ends, canopy strips) the ground is dry grass or soil like the inter-rows', not green: the
+    # inter-row scrap tiers apply there too, clear of pale structures and buildings (in-block labels at P02, 20:55)
+    if (c["location"] == "block" and c["kind"] == "white" and c["structure"] == 0 and c["forbidden_m"] >= params.building_m
+            and _white(c, params, pile=False)):
+        return True
     context = (c["structure"] == 0 and c["fill"] >= params.rest_fill and c["ring_green"] >= params.rest_ring_green
                and c["density"] - area / 9 <= (params.near_density if near else params.rest_density) and c["forbidden_m"] >= params.building_m
                and c["row_m"] >= params.row_m)
@@ -361,7 +396,7 @@ def boxes(found: list[dict[str, Any]], predictions: list[dict[str, Any]], params
         return []
     merged = unary_union([box(*c["box"]).buffer(params.pad_m, join_style="mitre") for c in kept])
     blocks = [(shape(f["geometry"]), f["properties"]["vineyard_id"]) for f in predictions if f["properties"].get("label") == "block"]
-    union = unary_union([polygon for polygon, _ in interrows(predictions)]) if params.scope != "site" else None
+    union = zone([p for p, _ in interrows(predictions)], [p for p, _ in blocks], params.margin_m) if params.scope != "site" else None
     tree = STRtree([box(*c["box"]) for c in kept])
     features = []
     for part in getattr(merged, "geoms", [merged]):
