@@ -61,9 +61,13 @@ export function createMeasurements(map: L.Map, sources: Sources) {
       return;
     }
     const { total, estimate_blocks: estimated } = data;
+    // the official site route (route.geojson: scope site, every visit point), as marcaj.scene picks it
+    const official = sources.features().filter((item) => item.properties.label === 'route'
+      && (item.properties.scope ?? 'site') === 'site' && item.properties.min_confidence == null && typeof item.properties.length_m === 'number');
+    const route = official.length ? [stat('Inspection route', `${metres.format(official.reduce((sum, item) => sum + (item.properties.length_m ?? 0), 0))} m`, 'site route')] : [];
     grid.replaceChildren(
       stat('Fields', count.format(total.block_count)), stat('Rows', count.format(total.row_count)),
-      ...areaStats(total), stat('Total row length', `${metres.format(total.row_length_m)} m`, '', true),
+      ...areaStats(total), stat('Total row length', `${metres.format(total.row_length_m)} m`, '', !route.length), ...route,
     );
     const all = estimated > 0 && estimated === total.block_count;
     basis.replaceChildren(badge(estimated > 0, all ? 'MODEL ESTIMATE' : estimated ? 'PART ESTIMATE' : 'ANNOTATED'));
@@ -139,19 +143,34 @@ export function createMeasurements(map: L.Map, sources: Sources) {
     element('measure-title').textContent = field ? `Field ${field}` : 'Measurements';
     renderTable();
   }
-  function select(rowId: string): void {
+  /** The field's row pieces as measured: the model's for an estimated field, the annotated ones otherwise. */
+  function measuredPieces(): MapFeature[] {
+    const estimate = block()?.estimate ?? false;
+    return sources.features().filter((item) => item.properties.label === 'row' && item.properties.vineyard_id === field
+      && (item.properties.source === 'prediction') === estimate);
+  }
+  /** Highlight and label a row; a table pick (`fit`) zooms to it, a map pick (`at`, the click) labels it where clicked. */
+  function select(rowId: string, fit = true, at?: L.LatLng): void {
     selected = rowId;
     highlight.clearLayers();
-    const estimate = block()?.estimate ?? false;
-    // the row as measured: the model's pieces for an estimated field, the annotated pieces otherwise
-    const pieces = sources.features().filter((item) => item.properties.label === 'row' && item.properties.row_id === rowId
-      && item.properties.vineyard_id === field && (item.properties.source === 'prediction') === estimate);
+    const pieces = measuredPieces().filter((item) => item.properties.row_id === rowId);
     for (const item of pieces) {
       L.geoJSON(item, { pane: 'inspection-routes', interactive: false, style: { color: '#fff', weight: 10, opacity: 0.95 } }).addTo(highlight);
       L.geoJSON(item, { pane: 'inspection-routes', interactive: false, style: { color: '#f59e0b', weight: 5, opacity: 1 } }).addTo(highlight);
     }
     const bounds = L.geoJSON(pieces).getBounds();
     if (bounds.isValid()) {
+      // the row's ID and length on the map, as a label (text content: IDs come from the scene)
+      const row = data?.rows.find((item) => item.row_id === rowId && item.vineyard_id === field);
+      const label = document.createElement('span');
+      label.textContent = row ? `${rowId} · ${metres.format(row.length_m)} m` : rowId;
+      // a table pick is centred by the fit below; a map pick's label opens towards the middle of the map the panels leave
+      const [[left], [right]] = sources.padding();
+      const middle = (left + map.getSize().x - right) / 2;
+      const direction = !at ? 'top' : map.latLngToContainerPoint(at).x < middle ? 'right' : 'left';
+      L.tooltip({ permanent: true, direction }).setLatLng(at ?? bounds.getCenter()).setContent(label).addTo(highlight);
+    }
+    if (fit && bounds.isValid()) {
       const [paddingTopLeft, paddingBottomRight] = sources.padding();
       map.fitBounds(bounds.pad(0.25), { paddingTopLeft, paddingBottomRight, maxZoom: 20 });
     }
@@ -159,8 +178,28 @@ export function createMeasurements(map: L.Map, sources: Sources) {
     for (const tr of element('row-table-body').querySelectorAll<HTMLTableRowElement>('tr')) {
       tr.classList.toggle('selected', tr.dataset.row === rowId);
       tr.querySelector('button')?.setAttribute('aria-pressed', String(tr.dataset.row === rowId));
+      if (!fit && tr.dataset.row === rowId) tr.scrollIntoView({ block: 'nearest' });
     }
   }
+  // a click on the map selects the nearest row of the field within a finger's width (rows are not interactive in this
+  // view, main.ts, so every click lands here)
+  map.on('click', (event: L.LeafletMouseEvent) => {
+    if (!map.hasLayer(highlight) || !field) return;
+    const at = map.latLngToLayerPoint(event.latlng);
+    let nearest: { item: MapFeature; distance: number } | null = null;
+    for (const item of measuredPieces()) {
+      const lines = item.geometry.type === 'LineString' ? [item.geometry.coordinates] : item.geometry.type === 'MultiLineString' ? item.geometry.coordinates : [];
+      for (const line of lines) {
+        const points = line.map(([lon, lat]) => map.latLngToLayerPoint([lat, lon]));
+        for (let k = 1; k < points.length; k += 1) {
+          const distance = L.LineUtil.pointToSegmentDistance(at, points[k - 1], points[k]);
+          if (!nearest || distance < nearest.distance) nearest = { item, distance };
+        }
+      }
+    }
+    const rowId = nearest && nearest.distance <= 14 ? nearest.item.properties.row_id : undefined;
+    if (rowId) select(rowId, false, event.latlng);
+  });
   // phones start with the site totals folded, so the map stays visible under the field sheet
   if (matchMedia('(max-width: 700px)').matches) element<HTMLDetailsElement>('measure-site-details').open = false;
   for (const header of document.querySelectorAll<HTMLTableCellElement>('#row-table th[data-sort]')) {

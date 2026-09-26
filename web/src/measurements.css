@@ -26,7 +26,7 @@ details:not([open]) > .measure-head { margin-bottom: 0; }
 .measure-empty { margin: 4px 0; font-size: 12px; line-height: 1.45; color: #6d7968; }
 .measure-rows-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 14px 0 6px; font-size: 13px; color: #334038; }
 .measure-rows-title small { font-size: 10px; font-weight: 500; color: #69796c; }
-.measure-panel .row-table-wrap { flex: 1 1 auto; min-height: 90px; overflow: auto; border-top: 1px solid #e5e9df; }
+.measure-panel .row-table-wrap { flex: 1 1 auto; min-height: 90px; overflow: auto; border-top: 1px solid #e5e9df; scroll-padding-top: 34px; }
 .row-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #334038; }
 .row-table th { position: sticky; top: 0; z-index: 1; padding: 0; background: #fff; border-bottom: 1px solid #e5e9df; }
 .row-table th button { width: 100%; padding: 8px 4px; border: 0; background: transparent; color: #566652; font-size: 11px; font-weight: 750; text-align: left; white-space: nowrap; }
@@ -57,7 +57,7 @@ details:not([open]) > .measure-head { margin-bottom: 0; }
   .measure-grid dt { font-size: 9px; }
   .measure-grid dd { font-size: 12px; }
   .measure-grid dd small { font-size: 9px; }
-  .measure-panel { top: auto; bottom: 76px; left: 8px; right: 8px; width: auto; max-height: 250px; padding: 11px 12px; }
+  .measure-panel { top: auto; bottom: 76px; left: 8px; right: 8px; width: auto; max-height: min(250px, calc(100dvh - 451px)); padding: 11px 12px; }
   .measure-panel > .section-kicker { display: none; }
   .measure-panel h2 { font-size: 15px; margin: 0 0 6px; }
   .measure-panel .measure-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
@@ -69,8 +69,14 @@ details:not([open]) > .measure-head { margin-bottom: 0; }
   .row-table th button { padding: 6px 4px; font-size: 10px; }
   #field-measure-panel { padding: 8px 13px 10px; }
   #field-measure-panel .measure-grid dd { font-size: 12px; }
-  body[data-view="measurements"] .map-key { top: auto; bottom: 334px; }
+  /* zoom beside the map tools, the legend under them: both clear of the site card and the field sheet (top ≥ 375px) */
+  body[data-view="measurements"] .leaflet-top.leaflet-left { top: 153px; left: 68px; }
+  body[data-view="measurements"] .map-key { top: 221px; bottom: auto; }
 }
 /* three plan tabs (Visit points, Evidence, Measurements) on one line */
 .plan-tabs button[data-panel] { white-space: nowrap; padding-left: 7px; padding-right: 7px; }
 @media (max-width:1020px) and (min-width:701px) { .plan-tabs button[data-panel] { padding-left: 5px; padding-right: 5px; } }
+/* clicks reach the rows: the highlight (routes pane) and field boundary canvases would otherwise take every map
+   click; a click then selects the nearest row (measurements.ts) */
+body[data-view="measurements"] .leaflet-inspection-routes-pane canvas,
+body[data-view="measurements"] .leaflet-field-boundaries-pane canvas { pointer-events: none; }

@@ -235,3 +235,4 @@ body[data-view="analysis"] .map-tools { display: none; }
 @media(min-width:701px) and (max-width:1020px){.plan{max-height:calc(100dvh - 385px)}}
 @media(max-height:620px) and (min-width:701px){.plan{max-height:calc(100dvh - 315px)}}
 .key-offroute{background:#fff;border-radius:50%;border:2px dashed #6b7280}.offroute-tip{max-width:260px;white-space:normal}
+.map-popup .offroute-note{display:block;max-width:240px;margin-top:4px;color:#4b5563}

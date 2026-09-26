@@ -32,6 +32,9 @@ VARIANTS = {
     "recall_min02": replace(D, min_m2=0.2),
     "recall_512": replace(D, crop_px=512),
     "recall_1m": replace(D, plant_m=1.0),
+    "recall_large": replace(D, model_id="facebook/sam2.1-hiera-large"),
+    "recall_dark05_large": replace(D, max_dark=0.5, model_id="facebook/sam2.1-hiera-large"),
+    "recall_ex10_large": replace(D, min_excess=10, model_id="facebook/sam2.1-hiera-large"),
 }
 
 

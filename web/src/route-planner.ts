@@ -113,7 +113,7 @@ export function createRoutePlanner(map: L.Map, sources: PlannerSources) {
       const snapped = [route.start.snapped_m > 1 ? `start moved ${Math.round(route.start.snapped_m)} m onto the nearest inter-row` : '',
         points.end && route.end.snapped_m > 1 ? `end moved ${Math.round(route.end.snapped_m)} m` : ''].filter(Boolean).join(', ');
       say([
-        `${distance(route.length_m)} · ${route.visited} of ${route.targets} visit points`,
+        `${distance(route.length_m)} · ${route.visited} of ${route.targets} visit points${route.targets > route.visited ? ` (${route.targets - route.visited} left off, grey on the map)` : ''}`,
         route.hops ? `${route.hops} row step${route.hops === 1 ? '' : 's'}` : 'no row steps',
         `${(route.outside_share * 100).toFixed(1)}% off inter-rows and passages`,
         `${route.compute_s.toFixed(1)} s`,

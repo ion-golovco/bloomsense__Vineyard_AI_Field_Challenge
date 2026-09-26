@@ -12,7 +12,7 @@ from typing import Any
 
 from shapely.geometry import shape
 
-from marcaj import canopy, canopy_net, plots, rows, waste
+from marcaj import canopy, canopy_net, obstacles, plots, rows, waste
 from marcaj.layers import Layers
 from marcaj.tiles import DATA_DIR, PIXEL_M, REPO_ROOT, TILE_PX, Tile, load_tiles
 
@@ -39,8 +39,10 @@ def predict(params: plots.PlotParams = plots.PlotParams(), data_dir: Path = DATA
     found, canopies, dropped = plots.verify_plots(found, canopies, params, data_dir)
     if dropped_out is not None:
         dropped_out += dropped
-    found += rows.interrow_areas(found, plots.exclusions(data_dir)) + canopies
-    found += waste.detect(tiles, found, data_dir)[0]
+    # trees and buildings in or at a block: cut out of inter-rows (the rules), and poi reads them to skip stretches that end at one
+    blocked = obstacles.detect(found, plots.exclusions(data_dir))
+    found += rows.interrow_areas(found, plots.exclusions(data_dir), blocked) + canopies + blocked
+    found += waste.detect(tiles, found, data_dir, waste.WasteParams(workers=2))[0]  # 6 workers froze the laptop beside other runs
     # detect_plots keys everything by row pattern; blocks (the organizer 5 m rule) are assigned last, on the whole prediction
     return plots.assign_blocks(rows.per_tile(found, tiles))
 

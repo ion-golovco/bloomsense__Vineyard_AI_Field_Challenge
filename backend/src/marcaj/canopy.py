@@ -118,6 +118,14 @@ class CanopyParams:
     veg_ring_gr: float = 8.5
     tuft_m2: float = 0.0       # a piece mostly of weak-stretch pixels (`weak_dn`) is kept down to this; 0 = off
     lab_a: float = 0.0         # also count as colour a pixel whose CIELAB a* (smoothed) is under this (green hue, any darkness); 0 = off
+    weak_a: float = 0.0        # weak stretches also take pixels whose a* is under this (dark green foliage); 0 = off
+    grow_a: float = 0.0        # grow the canopy into tube pixels 8-connected to it whose a* is under this...; 0 = off
+    grow_dn: float = 5.0       # ...and 2g - r - b above this (grey-brown shadow on soil has a* near 0 and 2g - r - b near 0)
+    grow_core_m: float = 0.0   # ...within this distance of the axis only (bridges plants along the row, not their shaded flank); 0 = the tube
+    grass_ratio: float = 0.0   # drop an axis whose canopy colour is both paler (mean 2g - r - b) and smoother (mean |grad g|) than
+    grass_axes: int = 4        # ...this share of the median axis of its plot on the tile (at least `grass_axes` axes); 0 = off
+    grass_flank: float = 1.5   # ...when it is an outermost axis and its flanks are over this times as green as the median's
+    grass_flank_min: float = 0.15  # ...and over this share green (2g - r - b above `green_dn`)
 
 
 def excess_green(rgb: np.ndarray, params: CanopyParams) -> tuple[np.ndarray, np.ndarray]:
@@ -298,10 +306,10 @@ def value_contrast(axis: LineString, excess: np.ndarray, transform: Affine, para
 
 
 def kept_axes(axes: list[LineString], green: np.ndarray, transform: Affine, params: CanopyParams,
-              spacing_m: float = 0.0, excess: np.ndarray | None = None) -> list[LineString]:
+              spacing_m: float = 0.0, excess: np.ndarray | None = None, rgb: np.ndarray | None = None) -> list[LineString]:
     """The axes of one plot on one tile, clipped to it, re-fitted on `green` and filtered: the canopy tube's centre lines.
     `spacing_m` is the plot's row spacing (`row_spacing` of all its axes); 0 takes the median over these axes.
-    `excess` (`excess_green`) enables the `row_value` test."""
+    `excess` (`excess_green`) enables the `row_value` test, with `rgb` also the `grass_ratio` test."""
     bounds = box(*array_bounds(*green.shape, transform))
     clipped = [axis.intersection(bounds) for axis in axes]
     fitted = [fit_axis(LineString(c.coords), green, transform, params) for c in clipped if c.geom_type == "LineString" and c.length > 0]
@@ -309,7 +317,40 @@ def kept_axes(axes: list[LineString], green: np.ndarray, transform: Affine, para
     kept = _drop_interrows(kept, green, transform, params, spacing_m) if params.row_gap else kept
     if params.row_value and excess is not None:
         kept = [axis for axis in kept if value_contrast(axis, excess, transform, params) >= params.row_value]
+    if params.grass_ratio and excess is not None and rgb is not None and len(kept) >= params.grass_axes:
+        kept = _drop_grass_rows(kept, green, excess, rgb, transform, params)
     return kept
+
+
+def _drop_grass_rows(axes: list[LineString], green: np.ndarray, excess: np.ndarray, rgb: np.ndarray, transform: Affine,
+                     params: CanopyParams) -> list[LineString]:
+    """Drops an outermost axis (first or last across the rows) whose canopy-colour pixels in the tube are both paler (mean
+    2g - r - b) and smoother (mean |grad g|) than `grass_ratio` of the plot's median axis on the tile, and whose flanks
+    (0.6-1.0 m) are over `grass_flank` times as green as the median axis's and over `grass_flank_min` green: the lattice ran on over a grassy or weedy
+    verge. Vine canopy is bright yellow-green leaves and their shade; verge grass and weeds are pale and even, and green
+    all around. In V19-11, V21-13 and V22-13 the two verge rows scored 0.72 / 0.68-0.76 of their block's median with
+    flanks 2.0 / 2.9 times as green; the other 133 rows 0.91-1.06."""
+    gy, gx = np.gradient(rgb[1].astype(np.float32))
+    stats = []
+    for axis in axes:
+        rows, cols = _pixels(axis.buffer(FLANK_M[1], cap_style="flat"), transform, green.shape)
+        (x0, y0), (x1, y1) = axis.coords[0], axis.coords[-1]
+        d = np.array([x1 - x0, y1 - y0]) / axis.length
+        v = np.abs(-(transform.c + (cols + 0.5) * transform.a - x0) * d[1] + (transform.f + (rows + 0.5) * transform.e - y0) * d[0])
+        on = green[rows, cols] & (v <= params.tube_m)
+        flank = green[rows, cols][(v >= FLANK_M[0]) & (v <= FLANK_M[1])]
+        r, c = rows[on], cols[on]
+        stats.append((float(excess[r, c].mean()), float(np.hypot(gx[r, c], gy[r, c]).mean()), float(flank.mean()) if len(flank) else 0.0)
+                     if len(r) >= 320 else None)
+    known = [s for s in stats if s]
+    if len(known) < params.grass_axes:
+        return axes
+    ex, grad, side = (float(np.median([s[k] for s in known])) for k in range(3))
+    order = [axis for _, axis in _across(axes)]
+    edges = {id(order[0]), id(order[-1])}
+    grass = lambda a, s: (s is not None and id(a) in edges and s[0] < params.grass_ratio * ex and s[1] < params.grass_ratio * grad
+                          and s[2] > max(params.grass_flank * side, params.grass_flank_min))
+    return [a for a, s in zip(axes, stats) if not grass(a, s)]
 
 
 def close(mask: np.ndarray, radius_m: float) -> np.ndarray:
@@ -327,12 +368,16 @@ def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], para
     `spacing_m` goes to `kept_axes`. `with_weak` also returns the weak-stretch pixels (`_weak`) for `canopy_polygons`."""
     excess, valid = excess_green(rgb, params)
     green = (green_mask(rgb, params) if green is None else green) & valid
-    kept = kept_axes(axes, green, transform, params, spacing_m, excess)
+    kept = kept_axes(axes, green, transform, params, spacing_m, excess, rgb)
     band = tube(kept, transform, green.shape, params.tube_m)
     if params.otsu and band.any():
         green = (excess > otsu(excess[band & valid])) & valid
     mask = green & band
-    weak = _weak(mask, kept, green, excess, valid, transform, params) if params.weak_dn and params.green_dn else None
+    hue = lab_a_star(rgb, params) if params.weak_a or params.grow_a else None
+    if params.grow_a:
+        core = tube(kept, transform, green.shape, params.grow_core_m) if params.grow_core_m else band
+        mask = ndimage.binary_propagation(mask, EIGHT, mask | (core & valid & (hue < params.grow_a) & (excess > params.grow_dn)))
+    weak = _weak(mask, kept, green, excess, valid, transform, params, hue) if params.weak_dn and params.green_dn else None
     if weak is not None:
         mask |= weak
     if params.close_m:
@@ -345,7 +390,7 @@ def canopy_mask(rgb: np.ndarray, transform: Affine, axes: list[LineString], para
 
 
 def _weak(mask: np.ndarray, axes: list[LineString], green: np.ndarray, excess: np.ndarray, valid: np.ndarray,
-          transform: Affine, params: CanopyParams) -> np.ndarray:
+          transform: Affine, params: CanopyParams, hue: np.ndarray | None = None) -> np.ndarray:
     """The pixels to add along each axis: per `weak_window_m` stretch whose tube is under `weak_share` canopy colour,
     those whose 2g - r - b is above `weak_dn` (a weak, young or dark-leaved stretch of row; the full threshold keeps
     shadow and weeds out elsewhere)."""
@@ -360,7 +405,10 @@ def _weak(mask: np.ndarray, axes: list[LineString], green: np.ndarray, excess: n
         window = np.floor(u / params.weak_window_m).astype(int)
         window -= window.min()
         share = np.bincount(window, weights=green[rows, cols]) / np.maximum(np.bincount(window), 1)
-        low = (share[window] < params.weak_share) & (excess[rows, cols] > params.weak_dn) & valid[rows, cols]
+        colour = excess[rows, cols] > params.weak_dn
+        if hue is not None and params.weak_a:
+            colour |= hue[rows, cols] < params.weak_a
+        low = (share[window] < params.weak_share) & colour & valid[rows, cols]
         out[rows[low], cols[low]] = True
     return out & ~mask
 

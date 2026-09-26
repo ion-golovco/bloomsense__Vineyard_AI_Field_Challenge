@@ -1,6 +1,6 @@
 """SAM 2.1 tiny box refinement (marcaj.sam.refine, the closest of three masks) of the 18:13 base canopies on the two
 organizer tiles, held to several limits: none, the +-0.3 m tube of the base rows, the piece grown 0.05 m, the piece itself.
-Evaluation only. Run from backend/: HF_HUB_OFFLINE=1 uv run --frozen --group sam python ../research/probes/sam_v2_refine.py"""
+Evaluation only. Run from backend/: HF_HUB_OFFLINE=1 uv run --frozen --group sam python ../research/probes/sam_v2_refine.py [MODEL_ID]"""
 
 import json
 import sys
@@ -14,10 +14,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sam_v2_lib import NAMES, base_features, by_tile, judge_canopies, rows_of  # noqa: E402
 
 from marcaj import canopy  # noqa: E402
+from marcaj import sam  # noqa: E402
 from marcaj.sam import refine  # noqa: E402
 from marcaj.tiles import load_tiles  # noqa: E402
 
 if __name__ == "__main__":
+    sam.MODEL_ID = sys.argv[1] if len(sys.argv) > 1 else sam.MODEL_ID  # _model() reads it on first use
+    tag0 = sam.MODEL_ID.rsplit("-", 1)[-1]
     tiles = {t.name: t for t in load_tiles()}
     features = base_features()
     per_tile = by_tile(features)
@@ -41,4 +44,4 @@ if __name__ == "__main__":
                 parts = [p for p in getattr(held, "geoms", [held]) if p.geom_type == "Polygon" and p.area >= 0.2]
                 if parts:
                     out.append({**f, "geometry": mapping(max(parts, key=lambda p: p.area))})
-        print(json.dumps({"name": f"refine_{tag}", "judge": judge_canopies(rest + out), "n_refs": len(out), "seconds_2_tiles": round(seconds, 1)}), flush=True)
+        print(json.dumps({"name": f"refine_{tag}_{tag0}", "judge": judge_canopies(rest + out), "n_refs": len(out), "seconds_2_tiles": round(seconds, 1)}), flush=True)

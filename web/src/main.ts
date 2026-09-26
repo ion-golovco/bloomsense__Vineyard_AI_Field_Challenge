@@ -114,6 +114,13 @@ function popupFor(item: MapFeature): HTMLDivElement {
     line.textContent = `Row length: ${number.format(rowLength)} m`;
     popup.append(line);
   }
+  const offRouteNote = offRouteReason.get(item);
+  if (offRouteNote) {
+    const note = document.createElement('small');
+    note.className = 'offroute-note';
+    note.textContent = offRouteNote;
+    popup.append(note);
+  }
   if (parcel) {
     const note = document.createElement('small');
     note.textContent = `${typeof item.properties.area_m2 === 'number' ? `${number.format(item.properties.area_m2 / 10_000)} ha · ` : ''}does not establish ownership. ${scene?.cadastre?.credit ?? ''}`;
@@ -166,7 +173,8 @@ function applyVisibility(): void {
 /** Map padding that keeps a fitted shape clear of the Measurements view's panels. */
 function fitPadding(): [L.PointTuple, L.PointTuple] {
   const width = window.innerWidth;
-  return width <= 700 ? [[12, 160], [12, 330]] : width <= 1020 ? [[390, 440], [20, 100]] : [[550, 90], [350, 100]];
+  // phones: right of the legend, below the folded site totals, above the field sheet (measurements.css)
+  return width <= 700 ? [[112, 210], [12, 330]] : width <= 1020 ? [[390, 440], [20, 100]] : [[550, 90], [350, 100]];
 }
 function fitField(): void {
   if (view === 'yield') return;
@@ -217,7 +225,9 @@ function renderStops(): void {
       const title = document.createElement('strong');
       title.textContent = pointTitle(item);
       const meta = document.createElement('small');
-      meta.textContent = [item.properties.source === 'prediction' ? 'Candidate point' : 'Mapped point', item.properties.row_id].filter(Boolean).join(' · ');
+      meta.textContent = [item.properties.source === 'prediction' ? 'Candidate point' : 'Mapped point', item.properties.row_id,
+        offRouteReason.has(item) ? 'not on this route' : ''].filter(Boolean).join(' · ');
+      if (offRouteReason.has(item)) button.title = offRouteReason.get(item)!;
       copy.append(title, meta);
       button.append(badge, copy);
       button.addEventListener('click', () => focusPoint(item));
@@ -271,10 +281,11 @@ function updateSavings(): void {
 }
 // Visit points the shown route does not pass within 2 m of: grey and hollow, with why in a tooltip.
 let offRoute = 0;
+const offRouteReason = new Map<MapFeature, string>();  // also shown in the point's popup and stop-list entry (touch, keyboard)
 function offRouteText(entry: TargetStatus, left: number | null): string {
   if (entry.status === 'over_budget') {
     const needs = typeof entry.needs_outside_m === 'number' ? `~${Math.round(entry.needs_outside_m)} m` : 'more';
-    return `Not on this route: reaching it needs ${needs} outside the allowed lanes${left !== null ? ` (the route has ${Math.max(Math.round(left), 0)} m of its allowance left)` : ''}. Going over 2% outside would score the route 0.`;
+    return `Not on this route: reaching it needs ${needs} outside the allowed lanes${left !== null ? `; the route keeps a 1.2% safety margin under the 2% rule and has ${Math.max(Math.round(left), 0)} m of it left` : ''}. Going over 2% outside would score the route 0.`;
   }
   if (entry.status === 'unreachable') return `Not on this route: no legal path${entry.reason ? ` (${entry.reason})` : ''}.`;
   return 'Not on this route: the route passes more than 2 m away.';
@@ -287,15 +298,18 @@ function markOffRoute(shown: MapFeature[]): void {
     for (const entry of route.properties.target_status ?? []) status.set(entry.id, { entry, left });
   }
   offRoute = 0;
+  offRouteReason.clear();
   for (const [item, layer] of pointLayers) {
     const found = status.get(String(item.properties.id ?? ''));
     if (!found || found.entry.status === 'visited' || !(layer instanceof L.CircleMarker)) continue;
     offRoute += 1;
+    offRouteReason.set(item, offRouteText(found.entry, found.left));
     layer.setStyle({ color: '#6b7280', weight: 2.5, fillColor: '#fff', fillOpacity: 0.95, dashArray: '3 3' });
     const tip = document.createElement('span');
-    tip.textContent = offRouteText(found.entry, found.left);
+    tip.textContent = offRouteReason.get(item)!;
     layer.bindTooltip(tip, { direction: 'top', className: 'offroute-tip' });
   }
+  text('offroute-key-label', `Not on this route (${offRoute})`);
 }
 function renderField(fit = true): void {
   if (!scene || !field) return;
@@ -364,7 +378,8 @@ function renderField(fit = true): void {
       }
     } else if (label === 'row') {
       layerCounts.row += 1;
-      addFeature(item, 'row', { color: '#d52e36', weight: map.getZoom() >= 18 ? 2.5 : 1.25, opacity: 0.85 });
+      // in Measurements a map click picks the nearest row instead (measurements.ts)
+      addFeature(item, 'row', { color: '#d52e36', weight: map.getZoom() >= 18 ? 2.5 : 1.25, opacity: 0.85, interactive: view !== 'measurements' });
     } else if (label === 'vineyard') {
       layerCounts.vineyard += 1;
       addFeature(item, 'vineyard', { color: '#078ca0', weight: 1, fillColor: '#10bdd0', fillOpacity: 0.5 });

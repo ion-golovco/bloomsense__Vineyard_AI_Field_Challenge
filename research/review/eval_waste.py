@@ -5,6 +5,11 @@ overlaps):
 - checklist: the north and south checklists' "likely" items the user has not answered;
 - eye: the earlier eye verdicts, "likely" or "not" (south_verdicts.json, the site-wide v1 labels.json and
   detector_review.json).
+On the two organizer example tiles the organizers' reference (no waste) overrides every label ("organizer" not waste).
+Scores per verifier: labelled-waste boxes (TP), labelled-not boxes (FP), unlabelled boxes, recall of labelled waste,
+F1 = 2R / (2R + FP + U/2 + P - R) with unlabelled boxes counted as half a false box, and `iou`: one-to-one matches at
+IoU >= 0.3 against the labelled boxes (card boxes are review clusters, often looser than the object). The split
+halves are north and south of northing 5220200, the median northing of the labelled waste.
 Candidates come from data/generated/work/waste/candidates_site.json, written by `python -m marcaj.waste`.
 Run from backend/: uv run --frozen python ../research/review/eval_waste.py [--misses]"""
 
@@ -24,6 +29,8 @@ GEN = REPO_ROOT / "data" / "generated"
 WASTE_DIR = GEN / "work" / "waste"
 GRID_LEFT, GRID_TOP, TILE_M = 628992.0, 5221222.4, TILE_PX * PIXEL_M
 GROUPS = ("interrow", "block", "headland", "outside")
+EXAMPLE_TILES = ((6, 4), (21, 12))  # siret3_r006_c004, siret3_r021_c012: organizer reference, no waste
+SPLIT_N = 5220200.0
 
 
 def _px_box(tile: str, x0: float, y0: float, x1: float, y1: float) -> Any:
@@ -66,7 +73,8 @@ def labelled() -> list[tuple[Any, bool, str]]:
         if tree is None or not len(tree.query(g.buffer(0.2))):
             kept.append((g, positive, source))
             tree = STRtree([k[0] for k in kept])
-    return kept
+    examples = unary_union([box(GRID_LEFT + TILE_M * c, GRID_TOP - TILE_M * (r + 1), GRID_LEFT + TILE_M * (c + 1), GRID_TOP - TILE_M * r) for r, c in EXAMPLE_TILES])
+    return [(g, False, "organizer") if examples.contains(g.centroid) else (g, positive, source) for g, positive, source in kept]
 
 
 def locate(geometry: Any, context: waste.Context, interrow_union: Any, reach_m: float = 10.0) -> str:
@@ -78,14 +86,18 @@ def locate(geometry: Any, context: waste.Context, interrow_union: Any, reach_m: 
     return "headland" if waste.vineyard_id(geometry, context.blocks, reach_m) else "outside"
 
 
-def evaluate(name: str, found: list[dict[str, Any]], items: list[tuple[Any, bool, str, str]]) -> None:
+def evaluate(name: str, found: list[dict[str, Any]], items: list[tuple[Any, bool, str, str]], half: str = "") -> float:
+    """Prints one line of scores (module docstring) and returns F1; `half` "N" or "S" keeps one split half."""
+    if half:
+        inside = lambda g: (g.centroid.y > SPLIT_N) == (half == "N")
+        found, items = [f for f in found if inside(shape(f["geometry"]))], [it for it in items if inside(it[0])]
     tree = STRtree([g for g, _, _, _ in items])
     counts = {group: [0, 0, 0] for group in GROUPS}  # TP, FP, unlabelled boxes
-    for f in found:
-        g = shape(f["geometry"])
+    shapes = [shape(f["geometry"]) for f in found]
+    for f, g in zip(found, shapes):
         hits = [items[i] for i in tree.query(g.buffer(0.2))]
         counts[f["properties"]["location"]][0 if any(pos for _, pos, _, _ in hits) else 1 if hits else 2] += 1
-    found_tree = STRtree([shape(f["geometry"]) for f in found]) if found else None
+    found_tree = STRtree(shapes) if found else None
     hit = lambda g: found_tree is not None and len(found_tree.query(g.buffer(0.2))) > 0
     parts = []
     for group in GROUPS:
@@ -94,19 +106,37 @@ def evaluate(name: str, found: list[dict[str, Any]], items: list[tuple[Any, bool
         parts.append(f"{group} {tp}/{fp}/{unlabelled} rec {sum(map(hit, positives))}/{len(positives)}")
     tp, fp, unlabelled = (sum(c[i] for c in counts.values()) for i in range(3))
     positives = [g for g, pos, _, _ in items if pos]
-    print(f"{name:30s} boxes {len(found):3d} TP {tp:2d} FP {fp:2d} unlab {unlabelled:3d} prec {tp / max(tp + fp, 1):.2f} "
-          f"rec {sum(map(hit, positives))}/{len(positives)} | " + " | ".join(parts))
+    recalled = sum(map(hit, positives))
+    pairs = sorted(((a.intersection(b).area / a.union(b).area, i, j) for j, b in enumerate(positives)
+                    for i in (found_tree.query(b) if found_tree is not None else []) for a in [shapes[i]]), reverse=True)
+    used_i, used_j = set(), set()
+    for iou, i, j in pairs:
+        if iou >= 0.3 and i not in used_i and j not in used_j:
+            used_i.add(i)
+            used_j.add(j)
+    f1 = 2 * recalled / max(2 * recalled + fp + unlabelled / 2 + len(positives) - recalled, 1)
+    print(f"{name:34s} boxes {len(found):3d} TP {tp:2d} FP {fp:2d} unlab {unlabelled:3d} prec {tp / max(tp + fp, 1):.2f} "
+          f"rec {recalled:2d}/{len(positives)} F1 {f1:.3f} iou {len(used_i):2d}" + ("" if half else " | " + " | ".join(parts)))
+    return f1
 
 
-VARIANTS: dict[str, dict[str, Any]] = {
-    "before: inter-rows only": {"scope": "interrow"},
-    "now": {},
-    "outside: v1 verifier": {"rest_area_m2": (0.10, 1.5), "rest_clipped": 0.25, "rest_chroma": 255.0, "rest_row_m": 0.9, "rest_ring_green": 0.4},
-    "near: as outside (lum 225, density 0.03, row 1.5)": {"near_lum": 225.0, "near_density": 0.03, "near_row_m": 1.5},
-    "near: lum>=218 row>=0.9 chroma<=25": {"near_lum": 218.0, "near_row_m": 0.9, "rest_chroma": 25.0},
-    "outside: area>=0.05": {"rest_area_m2": (0.05, 1.5)},
-    "outside: density<=0.05": {"rest_density": 0.05},
-    "outside: lum>=228": {"rest_lum": 228.0},
+def before(c: dict[str, Any], params: waste.WasteParams = waste.WasteParams()) -> bool:
+    """The 18:50 verifier: outside the inter-rows >= 1.2 m from a row near a block, >= 1.5 m elsewhere, chroma <= 20,
+    clipped share >= 0.10 (inter-rows unchanged)."""
+    if c.get("location", "interrow") == "interrow":
+        return waste.accept(c, params)
+    near = c["location"] in ("block", "headland")
+    return waste.accept(c, replace(params, row_m=1.2 if near else 1.5, rest_chroma=20.0, rest_clipped=0.10))
+
+
+VARIANTS: dict[str, tuple[dict[str, Any], Any]] = {
+    "inter-rows only (10:20 rule)": ({"scope": "interrow"}, waste.accept),
+    "site-wide 18:50": ({}, before),
+    "now": ({}, waste.accept),
+    "now, near density <= 0.20": ({"near_density": 0.20}, waste.accept),
+    "now, clipped >= 0": ({"rest_clipped": 0.0}, waste.accept),
+    "now, outside density <= 0.05": ({"rest_density": 0.05}, waste.accept),
+    "now, small tier lum >= 212": ({"small_lum": 212.0}, waste.accept),
 }
 
 
@@ -128,10 +158,18 @@ def main() -> None:
     conform = [it for it in items if it[2] != "user flagged"]  # the user's waste answers the rule flags question are left out
     for label_set, chosen_items in (("all labels", items), ("rule-conform labels (flagged waste answers left out)", conform)):
         print(f"-- {label_set}: {sum(1 for it in chosen_items if it[1])} waste, {sum(1 for it in chosen_items if not it[1])} not waste")
-        for name, change in VARIANTS.items():
+        for name, (change, verifier) in VARIANTS.items():
             params = replace(base, **change)
             chosen = [c for c in found if params.scope == "site" or c["location"] == "interrow"]
-            evaluate(name, waste.boxes(chosen, predictions, params), chosen_items)
+            evaluate(name, waste.boxes(chosen, predictions, params, verifier), chosen_items)
+    print(f"-- split halves, rule-conform labels (north / south of northing {SPLIT_N:.0f})")
+    for name in ("site-wide 18:50", "now"):
+        change, verifier = VARIANTS[name]
+        boxes = waste.boxes(found, predictions, replace(base, **change), verifier)
+        for half in ("N", "S"):
+            evaluate(f"{name} [{half}]", boxes, conform, half)
+    examples = {f"siret3_r{r:03d}_c{c:03d}.tif" for r, c in EXAMPLE_TILES}
+    print("control: boxes on the organizer example tiles (must be 0):", sum(1 for f in waste.boxes(found, predictions, base) if examples & set(f["properties"]["tiles"])))
     if "--misses" in sys.argv:
         boxes_now = waste.boxes(found, predictions, base)
         tree = STRtree([shape(f["geometry"]) for f in boxes_now])

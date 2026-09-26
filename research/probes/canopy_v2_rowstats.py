@@ -31,7 +31,7 @@ def row_table(fields, canopies_path=WORK / "canopies_defaults.json"):
         if p["label"] != "row" or p["block_id"] not in fields:
             continue
         line = shape(f["geometry"])
-        hits = [i for i in tree.query(line.buffer(0.3)) if C[i]["properties"].get("pattern_id") == p["pattern_id"]]
+        hits = [i for i in tree.query(line.buffer(0.3), predicate="intersects") if C[i]["properties"].get("pattern_id") == p["pattern_id"]]
         feats = []
         for i in hits:
             name = C[i]["properties"]["tile_run"]

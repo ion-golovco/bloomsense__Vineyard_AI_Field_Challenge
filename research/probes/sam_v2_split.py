@@ -29,6 +29,8 @@ VARIANTS = {
     "separate": replace(D, mode="separate"),
     "separate_512": replace(D, mode="separate", crop_px=512),
     "separate_2m": replace(D, mode="separate", plant_m=2.0),
+    "separate_large": replace(D, mode="separate", model_id="facebook/sam2.1-hiera-large"),
+    "assign_large": replace(D, model_id="facebook/sam2.1-hiera-large"),
 }
 
 if __name__ == "__main__":

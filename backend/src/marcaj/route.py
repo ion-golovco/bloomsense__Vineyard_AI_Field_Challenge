@@ -908,7 +908,7 @@ def _route_feature(cutoff: float | None, vineyard_id: str, line: LineString, row
     return {"type": "Feature", "geometry": mapping(line), "properties": {
         "label": "route", "source": "route", "scope": "field" if vineyard_id else "site", "vineyard_id": vineyard_id,
         "min_confidence": cutoff, "length_m": round(line.length, 3),
-        "targets": len(rows), "visited": report["visited"], "unreachable": len(rows) - report["visited"],
+        "targets": len(rows), "visited": report["visited"], "unreachable": sum(item["status"] == "unreachable" for item in rows),
         "over_budget": sum(item["status"] == "over_budget" for item in rows),
         "outside_share": round(report["outside_share"], 5), "robust_outside_share": round(report["robust_outside_share"], 5),
         "start_gap_m": round(report["start_gap_m"], 3), "end_gap_m": round(report["end_gap_m"], 3),

@@ -3,6 +3,61 @@
 26 September 2026. Everything below was measured on the 311 tiles. The verdicts ("likely", "possible", "unsure", "not")
 are my own, from contact sheets and 5x zooms. No labelled Sireț3 waste exists, so no number here is an accuracy.
 
+## Verifier retuned on the user's labels (19:55)
+
+**Labels.** 136 user waste answers (50 with rule flags), 563 not waste, plus the eye verdicts. The 4 waste answers on
+r006_c004 now count as not waste: the organizers' reference for that tile has no waste, and all 4 are dim inter-row
+scraps at luminance 212-215. So the organizers do not box that range, and the user's labels are looser than theirs.
+`research/review/eval_waste.py` now also prints:
+- F1, with each unlabelled box counted as half a false box;
+- one-to-one matches at IoU >= 0.3;
+- a north/south split at northing 5220200, the median of the labelled waste (5219600 would leave the south 8 items);
+- the example-tile control.
+
+**Changes, outside the inter-rows only.** The inter-row tests are unchanged.
+- Row distance: one threshold, `row_m` = 0.55 m, the small tier's. It was 1.2 m near blocks and 1.5 m elsewhere.
+- Chroma <= 25 (was 20).
+- Clipped share >= 0.05 (was 0.10).
+
+On the 90 waste answers without rule flags:
+
+| Verifier | Boxes | TP / FP / unlab | Prec | Recall | F1 | Interrow | Block | Headland | Outside | North F1 | South F1 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 18:50 | 60 | 38 / 13 / 9 | 0.75 | 37/90 | 0.512 | 7/14 | 1/12 | 13/27 | 16/37 | 0.571 | 0.456 |
+| now | 74 | 45 / 14 / 15 | 0.76 | 43/90 | 0.557 | 7/14 | 4/12 | 16/27 | 16/37 | 0.564 | 0.550 |
+
+**Honest split.** A coordinate descent over 12 thresholds, fitted on one half:
+- Fitted on the north, it picks only clipped >= 0, and the south stays at 0.456.
+- Fitted on the south, it picks chroma 25, row 0.5 m, near density 0.20 and outside density 0.05. The north then drops
+  to 0.506, from 14 new unlabelled boxes.
+
+The thresholds sit on a plateau and the gains do not transfer. The defaults take both halves' picks except the
+density changes, which failed on the other half. The gain is in the south; the north is flat.
+
+**Rejected** (crops checked):
+- near density <= 0.20: +3 recalled, +2 false boxes (one a 2.2 × 1.6 m pale soil patch) and 2 unlabelled, one of them a flowering shrub;
+- outside density <= 0.05: +16 unlabelled boxes;
+- small-tier luminance >= 212: +3 inter-row recalled, +12 false boxes (pale clods).
+
+**Box size: no systematic error, no change.**
+- A whitish region (distance >= 90, >= 30 over the background) was grown around each of the 37 confirmed items our
+  boxes hit. The median IoU with our box is 0.79, and 1 of 37 is below 0.3.
+- The looser grow (any distance >= 60) doubles the box, because it takes in grass and shadow.
+- 7 recalled items miss IoU 0.3 against their card. In every one the card is a review cluster 2-8× the object, and our
+  box sits on the object (crop sheet checked).
+
+**Remaining misses:**
+- dim inter-row scraps (luminance 210-215, the pale-clod range);
+- block items clustered on 4 tiles around P02 (r018-r021, c013-c015);
+- large rubbish heaps outside, which touch pale structures or dense evidence.
+
+The labelled-not boxes have the same colour statistics as the true ones, which caps precision near 0.75 on these
+features. A learned crop verifier (DroneWaste, below) is the next step.
+
+**Output:** `waste_sitewide.geojson`, 74 boxes: interrow 11, block 6, headland 25, and outside 32 with an empty
+`vineyard_id`. 0 on the example tiles. By eye, at least 2 of the 15 unlabelled boxes are flowering or silvery shrubs
+(r035_c024, r034_c022). `python -m marcaj.waste --workers 2` takes 90 s and 1.2 GB.
+
 ## Site-wide detector, rule flags (18:50)
 
 The rules (section 3) box litter "anywhere on the tile" and list the confounders: tubes, stakes, posts, wires,

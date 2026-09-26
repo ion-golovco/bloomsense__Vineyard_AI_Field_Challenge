@@ -1,0 +1,475 @@
+- generic [ref=e2]:
+  - application "Map of the selected vineyard field" [ref=e3]:
+    - generic:
+      - generic [ref=e4]:
+        - button "Zoom in" [ref=e5] [cursor=pointer]: +
+        - button "Zoom out" [ref=e6] [cursor=pointer]: −
+      - generic [ref=e7]:
+        - link "Leaflet" [ref=e8] [cursor=pointer]:
+          - /url: https://leafletjs.com
+        - text: "| ©"
+        - link "OpenStreetMap contributors" [ref=e13] [cursor=pointer]:
+          - /url: https://www.openstreetmap.org/copyright
+        - text: ", Drone: 3DATA COLLECT / OpenAerialMap ·"
+        - link "CC BY 4.0" [ref=e14] [cursor=pointer]:
+          - /url: https://creativecommons.org/licenses/by/4.0/
+  - complementary "Inspection navigation" [ref=e15]:
+    - generic [ref=e17]:
+      - strong [ref=e18]: Agrocontrol
+      - generic [ref=e19]: by BloomSense
+    - navigation "Sections" [ref=e20]:
+      - button "Per field" [ref=e21] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e22]: ▧
+      - button "All fields" [ref=e24] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e25]: ▦
+      - button "Measurements Areas & rows" [ref=e27] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e28]: ▥
+        - generic [ref=e29]:
+          - text: Measurements
+          - generic [ref=e30]: Areas & rows
+      - button "NDVI / NDMI Cadastru" [ref=e31] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e32]: ◈
+        - generic [ref=e33]:
+          - text: NDVI / NDMI
+          - generic [ref=e34]: Cadastru
+      - button "Yield & harvest" [ref=e35] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e36]: ↗
+    - generic [ref=e38]: AGROCONTROL · BLOOMSENSE
+  - status [ref=e39]: Measurements · Field V06-03
+  - region [ref=e40]:
+    - generic [ref=e41]:
+      - group "Who is using the app" [ref=e42]:
+        - button "Inspector" [pressed] [ref=e43] [cursor=pointer]
+        - button "Farmer" [ref=e44] [cursor=pointer]
+      - heading "Choose a field" [level=1] [ref=e45]
+    - generic [ref=e46]:
+      - generic [ref=e47]: Field
+      - combobox "Field" [ref=e48]:
+        - option "Field V06-03" [selected]
+        - option "Field V08-04"
+        - option "Field V09-01"
+        - option "Field V11-07"
+        - option "Field V12-04"
+        - option "Field V13-09"
+        - option "Field V14-04"
+        - option "Field V19-11"
+        - option "Field V21-13"
+        - option "Field V22-13"
+        - option "Field V22-15"
+        - option "Field V24-16"
+        - option "Field V26-18"
+        - option "Field V29-23"
+        - option "Field V30-16"
+        - option "Field V30-17"
+        - option "Field V30-18"
+        - option "Field V30-21"
+        - option "Field V31-17"
+        - option "Field V31-19"
+        - option "Field V32-18"
+        - option "Field V32-21"
+        - option "Field V33-19"
+        - option "Field V33-22"
+        - option "Field V33-22-2"
+        - option "Field V35-21"
+        - option "Field V35-22"
+        - option "Field V35-22-2"
+        - option "Field V35-25"
+        - option "Field V35-26"
+        - option "Field V36-24"
+        - option "Field V36-26"
+        - option "Field V37-22"
+        - option "Field V37-24"
+        - option "Field V37-25"
+        - option "Field V38-23"
+      - button "Fit selected field" [ref=e49] [cursor=pointer]: ⌗
+    - paragraph [ref=e50]: 1.00 ha · Candidate boundary from the model
+  - region [ref=e51]:
+    - group [ref=e52]:
+      - generic "SITE TOTALS PART ESTIMATE" [ref=e78] [cursor=pointer]:
+        - generic [ref=e54]: SITE TOTALS
+        - generic [ref=e79]: PART ESTIMATE
+        - generic [aria-hidden] [ref=e55]: ⌄
+      - generic [ref=e81]:
+        - generic [ref=e82]:
+          - term [ref=e83]: Fields
+          - definition [ref=e84]: "38"
+        - generic [ref=e85]:
+          - term [ref=e86]: Rows
+          - definition [ref=e87]: "700"
+        - generic [ref=e88]:
+          - term [ref=e89]: Canopy area
+          - definition [ref=e90]:
+            - text: 13,338.5 m²
+            - generic [ref=e91]: 1.334 ha
+        - generic [ref=e92]:
+          - term [ref=e93]: Inter-row area
+          - definition [ref=e94]:
+            - text: 98,137.0 m²
+            - generic [ref=e95]: 9.814 ha
+        - generic [ref=e96]:
+          - term [ref=e97]: Total row length
+          - definition [ref=e98]: 50,798.1 m
+      - paragraph [ref=e56]: Model estimate, before correction in Marcaj for 36 of 38 fields; the other 2 are measured from annotations.
+      - paragraph [ref=e57]: Lengths and areas in metres on the ground (EPSG:32635). Canopy and inter-row areas are the union of their polygons.
+  - region [ref=e99]:
+    - generic [ref=e59]: FIELD MEASUREMENTS
+    - heading "Field V06-03" [level=2] [ref=e100]
+    - generic [ref=e101]:
+      - generic [ref=e102]:
+        - generic [ref=e103]: MODEL ESTIMATE
+        - generic [ref=e104]: before correction in Marcaj
+      - generic [ref=e105]:
+        - generic [ref=e106]:
+          - term [ref=e107]: Canopy area
+          - definition [ref=e108]:
+            - text: 1,118.8 m²
+            - generic [ref=e109]: 0.112 ha
+        - generic [ref=e110]:
+          - term [ref=e111]: Inter-row area
+          - definition [ref=e112]:
+            - text: 7,133.6 m²
+            - generic [ref=e113]: 0.713 ha
+        - generic [ref=e114]:
+          - term [ref=e115]: Rows
+          - definition [ref=e116]: "63"
+        - generic [ref=e117]:
+          - term [ref=e118]: Total row length
+          - definition [ref=e119]: 3,603.2 m
+    - heading "Rows 63 rows · select one to show it on the map" [level=3] [ref=e120]:
+      - text: Rows
+      - generic [ref=e121]: 63 rows · select one to show it on the map
+    - table [ref=e122]:
+      - caption [ref=e123]: Rows of the selected field, with their lengths and row structure
+      - rowgroup [ref=e124]:
+        - row [ref=e125]:
+          - columnheader [ref=e126]:
+            - button "Row ▲" [ref=e127] [cursor=pointer]
+          - columnheader [ref=e128]:
+            - button "Length" [ref=e129] [cursor=pointer]
+          - columnheader [ref=e130]:
+            - button "Structure" [ref=e131] [cursor=pointer]
+      - rowgroup [ref=e132]:
+        - row [ref=e133]:
+          - cell [ref=e134]:
+            - button "Show row V06-03-R001 on the map" [ref=e135] [cursor=pointer]: V06-03-R001
+          - cell "28.4 m" [ref=e136]
+          - cell "regular" [ref=e137]
+        - row [ref=e138]:
+          - cell [ref=e139]:
+            - button "Show row V06-03-R002 on the map" [ref=e140] [cursor=pointer]: V06-03-R002
+          - cell "34.0 m" [ref=e141]
+          - cell "disrupted" [ref=e142]
+        - row [ref=e143]:
+          - cell [ref=e144]:
+            - button "Show row V06-03-R003 on the map" [ref=e145] [cursor=pointer]: V06-03-R003
+          - cell "35.3 m" [ref=e146]
+          - cell "regular" [ref=e147]
+        - row [ref=e148]:
+          - cell [ref=e149]:
+            - button "Show row V06-03-R004 on the map" [ref=e150] [cursor=pointer]: V06-03-R004
+          - cell "40.1 m" [ref=e151]
+          - cell "regular" [ref=e152]
+        - row [ref=e153]:
+          - cell [ref=e154]:
+            - button "Show row V06-03-R005 on the map" [ref=e155] [cursor=pointer]: V06-03-R005
+          - cell "46.4 m" [ref=e156]
+          - cell "regular" [ref=e157]
+        - row [ref=e158]:
+          - cell [ref=e159]:
+            - button "Show row V06-03-R006 on the map" [ref=e160] [cursor=pointer]: V06-03-R006
+          - cell "53.8 m" [ref=e161]
+          - cell "regular" [ref=e162]
+        - row [ref=e163]:
+          - cell [ref=e164]:
+            - button "Show row V06-03-R007 on the map" [ref=e165] [cursor=pointer]: V06-03-R007
+          - cell "58.7 m" [ref=e166]
+          - cell "regular" [ref=e167]
+        - row [ref=e168]:
+          - cell [ref=e169]:
+            - button "Show row V06-03-R008 on the map" [ref=e170] [cursor=pointer]: V06-03-R008
+          - cell "64.0 m" [ref=e171]
+          - cell "disrupted" [ref=e172]
+        - row [ref=e173]:
+          - cell [ref=e174]:
+            - button "Show row V06-03-R009 on the map" [ref=e175] [cursor=pointer]: V06-03-R009
+          - cell "67.4 m" [ref=e176]
+          - cell "disrupted" [ref=e177]
+        - row [ref=e178]:
+          - cell [ref=e179]:
+            - button "Show row V06-03-R010 on the map" [ref=e180] [cursor=pointer]: V06-03-R010
+          - cell "70.2 m" [ref=e181]
+          - cell "disrupted" [ref=e182]
+        - row [ref=e183]:
+          - cell [ref=e184]:
+            - button "Show row V06-03-R011 on the map" [ref=e185] [cursor=pointer]: V06-03-R011
+          - cell "69.5 m" [ref=e186]
+          - cell "disrupted" [ref=e187]
+        - row [ref=e188]:
+          - cell [ref=e189]:
+            - button "Show row V06-03-R012 on the map" [ref=e190] [cursor=pointer]: V06-03-R012
+          - cell "69.1 m" [ref=e191]
+          - cell "regular" [ref=e192]
+        - row [ref=e193]:
+          - cell [ref=e194]:
+            - button "Show row V06-03-R013 on the map" [ref=e195] [cursor=pointer]: V06-03-R013
+          - cell "69.0 m" [ref=e196]
+          - cell "regular" [ref=e197]
+        - row [ref=e198]:
+          - cell [ref=e199]:
+            - button "Show row V06-03-R014 on the map" [ref=e200] [cursor=pointer]: V06-03-R014
+          - cell "68.3 m" [ref=e201]
+          - cell "disrupted, regular" [ref=e202]
+        - row [ref=e203]:
+          - cell [ref=e204]:
+            - button "Show row V06-03-R015 on the map" [ref=e205] [cursor=pointer]: V06-03-R015
+          - cell "73.0 m" [ref=e206]
+          - cell "regular" [ref=e207]
+        - row [ref=e208]:
+          - cell [ref=e209]:
+            - button "Show row V06-03-R016 on the map" [ref=e210] [cursor=pointer]: V06-03-R016
+          - cell "74.4 m" [ref=e211]
+          - cell "disrupted, regular" [ref=e212]
+        - row [ref=e213]:
+          - cell [ref=e214]:
+            - button "Show row V06-03-R017 on the map" [ref=e215] [cursor=pointer]: V06-03-R017
+          - cell "73.6 m" [ref=e216]
+          - cell "regular" [ref=e217]
+        - row [ref=e218]:
+          - cell [ref=e219]:
+            - button "Show row V06-03-R018 on the map" [ref=e220] [cursor=pointer]: V06-03-R018
+          - cell "72.6 m" [ref=e221]
+          - cell "regular" [ref=e222]
+        - row [ref=e223]:
+          - cell [ref=e224]:
+            - button "Show row V06-03-R019 on the map" [ref=e225] [cursor=pointer]: V06-03-R019
+          - cell "71.7 m" [ref=e226]
+          - cell "regular" [ref=e227]
+        - row [ref=e228]:
+          - cell [ref=e229]:
+            - button "Show row V06-03-R020 on the map" [ref=e230] [cursor=pointer]: V06-03-R020
+          - cell "65.2 m" [ref=e231]
+          - cell "regular" [ref=e232]
+        - row [ref=e233]:
+          - cell [ref=e234]:
+            - button "Show row V06-03-R021 on the map" [ref=e235] [cursor=pointer]: V06-03-R021
+          - cell "60.2 m" [ref=e236]
+          - cell "regular" [ref=e237]
+        - row [ref=e238]:
+          - cell [ref=e239]:
+            - button "Show row V06-03-R022 on the map" [ref=e240] [cursor=pointer]: V06-03-R022
+          - cell "60.8 m" [ref=e241]
+          - cell "regular" [ref=e242]
+        - row [ref=e243]:
+          - cell [ref=e244]:
+            - button "Show row V06-03-R023 on the map" [ref=e245] [cursor=pointer]: V06-03-R023
+          - cell "61.3 m" [ref=e246]
+          - cell "regular" [ref=e247]
+        - row [ref=e248]:
+          - cell [ref=e249]:
+            - button "Show row V06-03-R024 on the map" [ref=e250] [cursor=pointer]: V06-03-R024
+          - cell "61.8 m" [ref=e251]
+          - cell "disrupted, regular" [ref=e252]
+        - row [ref=e253]:
+          - cell [ref=e254]:
+            - button "Show row V06-03-R025 on the map" [ref=e255] [cursor=pointer]: V06-03-R025
+          - cell "62.4 m" [ref=e256]
+          - cell "disrupted, regular" [ref=e257]
+        - row [ref=e258]:
+          - cell [ref=e259]:
+            - button "Show row V06-03-R026 on the map" [ref=e260] [cursor=pointer]: V06-03-R026
+          - cell "62.9 m" [ref=e261]
+          - cell "regular" [ref=e262]
+        - row [ref=e263]:
+          - cell [ref=e264]:
+            - button "Show row V06-03-R027 on the map" [ref=e265] [cursor=pointer]: V06-03-R027
+          - cell "61.9 m" [ref=e266]
+          - cell "regular" [ref=e267]
+        - row [ref=e268]:
+          - cell [ref=e269]:
+            - button "Show row V06-03-R028 on the map" [ref=e270] [cursor=pointer]: V06-03-R028
+          - cell "62.8 m" [ref=e271]
+          - cell "regular" [ref=e272]
+        - row [ref=e273]:
+          - cell [ref=e274]:
+            - button "Show row V06-03-R029 on the map" [ref=e275] [cursor=pointer]: V06-03-R029
+          - cell "63.1 m" [ref=e276]
+          - cell "regular" [ref=e277]
+        - row [ref=e278]:
+          - cell [ref=e279]:
+            - button "Show row V06-03-R030 on the map" [ref=e280] [cursor=pointer]: V06-03-R030
+          - cell "63.3 m" [ref=e281]
+          - cell "regular" [ref=e282]
+        - row [ref=e283]:
+          - cell [ref=e284]:
+            - button "Show row V06-03-R031 on the map" [ref=e285] [cursor=pointer]: V06-03-R031
+          - cell "63.5 m" [ref=e286]
+          - cell "regular" [ref=e287]
+        - row [ref=e288]:
+          - cell [ref=e289]:
+            - button "Show row V06-03-R032 on the map" [ref=e290] [cursor=pointer]: V06-03-R032
+          - cell "63.6 m" [ref=e291]
+          - cell "regular" [ref=e292]
+        - row [ref=e293]:
+          - cell [ref=e294]:
+            - button "Show row V06-03-R033 on the map" [ref=e295] [cursor=pointer]: V06-03-R033
+          - cell "63.5 m" [ref=e296]
+          - cell "regular" [ref=e297]
+        - row [ref=e298]:
+          - cell [ref=e299]:
+            - button "Show row V06-03-R034 on the map" [ref=e300] [cursor=pointer]: V06-03-R034
+          - cell "63.2 m" [ref=e301]
+          - cell "regular" [ref=e302]
+        - row [ref=e303]:
+          - cell [ref=e304]:
+            - button "Show row V06-03-R035 on the map" [ref=e305] [cursor=pointer]: V06-03-R035
+          - cell "62.4 m" [ref=e306]
+          - cell "regular" [ref=e307]
+        - row [ref=e308]:
+          - cell [ref=e309]:
+            - button "Show row V06-03-R036 on the map" [ref=e310] [cursor=pointer]: V06-03-R036
+          - cell "60.2 m" [ref=e311]
+          - cell "regular" [ref=e312]
+        - row [ref=e313]:
+          - cell [ref=e314]:
+            - button "Show row V06-03-R037 on the map" [ref=e315] [cursor=pointer]: V06-03-R037
+          - cell "60.0 m" [ref=e316]
+          - cell "regular" [ref=e317]
+        - row [ref=e318]:
+          - cell [ref=e319]:
+            - button "Show row V06-03-R038 on the map" [ref=e320] [cursor=pointer]: V06-03-R038
+          - cell "59.1 m" [ref=e321]
+          - cell "disrupted, regular" [ref=e322]
+        - row [ref=e323]:
+          - cell [ref=e324]:
+            - button "Show row V06-03-R039 on the map" [ref=e325] [cursor=pointer]: V06-03-R039
+          - cell "58.4 m" [ref=e326]
+          - cell "regular" [ref=e327]
+        - row [ref=e328]:
+          - cell [ref=e329]:
+            - button "Show row V06-03-R040 on the map" [ref=e330] [cursor=pointer]: V06-03-R040
+          - cell "57.3 m" [ref=e331]
+          - cell "regular" [ref=e332]
+        - row [ref=e333]:
+          - cell [ref=e334]:
+            - button "Show row V06-03-R041 on the map" [ref=e335] [cursor=pointer]: V06-03-R041
+          - cell "57.1 m" [ref=e336]
+          - cell "disrupted" [ref=e337]
+        - row [ref=e338]:
+          - cell [ref=e339]:
+            - button "Show row V06-03-R042 on the map" [ref=e340] [cursor=pointer]: V06-03-R042
+          - cell "56.7 m" [ref=e341]
+          - cell "regular" [ref=e342]
+        - row [ref=e343]:
+          - cell [ref=e344]:
+            - button "Show row V06-03-R043 on the map" [ref=e345] [cursor=pointer]: V06-03-R043
+          - cell "56.3 m" [ref=e346]
+          - cell "disrupted, regular" [ref=e347]
+        - row [ref=e348]:
+          - cell [ref=e349]:
+            - button "Show row V06-03-R044 on the map" [ref=e350] [cursor=pointer]: V06-03-R044
+          - cell "55.4 m" [ref=e351]
+          - cell "disrupted, regular" [ref=e352]
+        - row [ref=e353]:
+          - cell [ref=e354]:
+            - button "Show row V06-03-R045 on the map" [ref=e355] [cursor=pointer]: V06-03-R045
+          - cell "54.7 m" [ref=e356]
+          - cell "disrupted, regular, unassessable" [ref=e357]
+        - row [ref=e358]:
+          - cell [ref=e359]:
+            - button "Show row V06-03-R046 on the map" [ref=e360] [cursor=pointer]: V06-03-R046
+          - cell "54.3 m" [ref=e361]
+          - cell "regular" [ref=e362]
+        - row [ref=e363]:
+          - cell [ref=e364]:
+            - button "Show row V06-03-R047 on the map" [ref=e365] [cursor=pointer]: V06-03-R047
+          - cell "53.5 m" [ref=e366]
+          - cell "regular" [ref=e367]
+        - row [ref=e368]:
+          - cell [ref=e369]:
+            - button "Show row V06-03-R048 on the map" [ref=e370] [cursor=pointer]: V06-03-R048
+          - cell "53.1 m" [ref=e371]
+          - cell "regular" [ref=e372]
+        - row [ref=e373]:
+          - cell [ref=e374]:
+            - button "Show row V06-03-R049 on the map" [ref=e375] [cursor=pointer]: V06-03-R049
+          - cell "52.8 m" [ref=e376]
+          - cell "disrupted, regular" [ref=e377]
+        - row [ref=e378]:
+          - cell [ref=e379]:
+            - button "Show row V06-03-R050 on the map" [ref=e380] [cursor=pointer]: V06-03-R050
+          - cell "52.3 m" [ref=e381]
+          - cell "disrupted, regular" [ref=e382]
+        - row [ref=e383]:
+          - cell [ref=e384]:
+            - button "Show row V06-03-R051 on the map" [ref=e385] [cursor=pointer]: V06-03-R051
+          - cell "52.1 m" [ref=e386]
+          - cell "regular" [ref=e387]
+        - row [ref=e388]:
+          - cell [ref=e389]:
+            - button "Show row V06-03-R052 on the map" [ref=e390] [cursor=pointer]: V06-03-R052
+          - cell "51.8 m" [ref=e391]
+          - cell "disrupted" [ref=e392]
+        - row [ref=e393]:
+          - cell [ref=e394]:
+            - button "Show row V06-03-R053 on the map" [ref=e395] [cursor=pointer]: V06-03-R053
+          - cell "52.9 m" [ref=e396]
+          - cell "regular" [ref=e397]
+        - row [ref=e398]:
+          - cell [ref=e399]:
+            - button "Show row V06-03-R054 on the map" [ref=e400] [cursor=pointer]: V06-03-R054
+          - cell "52.1 m" [ref=e401]
+          - cell "regular" [ref=e402]
+        - row [ref=e403]:
+          - cell [ref=e404]:
+            - button "Show row V06-03-R055 on the map" [ref=e405] [cursor=pointer]: V06-03-R055
+          - cell "50.7 m" [ref=e406]
+          - cell "disrupted, regular" [ref=e407]
+        - row [ref=e408]:
+          - cell [ref=e409]:
+            - button "Show row V06-03-R056 on the map" [ref=e410] [cursor=pointer]: V06-03-R056
+          - cell "52.0 m" [ref=e411]
+          - cell "regular" [ref=e412]
+        - row [ref=e413]:
+          - cell [ref=e414]:
+            - button "Show row V06-03-R057 on the map" [ref=e415] [cursor=pointer]: V06-03-R057
+          - cell "51.3 m" [ref=e416]
+          - cell "regular" [ref=e417]
+        - row [ref=e418]:
+          - cell [ref=e419]:
+            - button "Show row V06-03-R058 on the map" [ref=e420] [cursor=pointer]: V06-03-R058
+          - cell "46.5 m" [ref=e421]
+          - cell "regular" [ref=e422]
+        - row [ref=e423]:
+          - cell [ref=e424]:
+            - button "Show row V06-03-R059 on the map" [ref=e425] [cursor=pointer]: V06-03-R059
+          - cell "44.9 m" [ref=e426]
+          - cell "regular" [ref=e427]
+        - row [ref=e428]:
+          - cell [ref=e429]:
+            - button "Show row V06-03-R060 on the map" [ref=e430] [cursor=pointer]: V06-03-R060
+          - cell "43.3 m" [ref=e431]
+          - cell "regular" [ref=e432]
+        - row [ref=e433]:
+          - cell [ref=e434]:
+            - button "Show row V06-03-R061 on the map" [ref=e435] [cursor=pointer]: V06-03-R061
+          - cell "41.1 m" [ref=e436]
+          - cell "regular" [ref=e437]
+        - row [ref=e438]:
+          - cell [ref=e439]:
+            - button "Show row V06-03-R062 on the map" [ref=e440] [cursor=pointer]: V06-03-R062
+          - cell "41.1 m" [ref=e441]
+          - cell "regular" [ref=e442]
+        - row [ref=e443]:
+          - cell [ref=e444]:
+            - button "Show row V06-03-R063 on the map" [ref=e445] [cursor=pointer]: V06-03-R063
+          - cell "40.9 m" [ref=e446]
+          - cell "regular" [ref=e447]
+  - group "Map controls" [ref=e66]:
+    - button "Canopy segmentation" [pressed] [ref=e67] [cursor=pointer]: ◉ Canopy
+    - group [ref=e68]:
+      - generic "Map layers" [ref=e69] [cursor=pointer]: ▤ Layers
+  - generic "Map legend" [ref=e70]:
+    - generic [ref=e71]: Selected field
+    - generic [ref=e448]: Vine rows
+    - generic [ref=e450]: Canopy segmentation
+    - generic [ref=e452]: Inter-rows

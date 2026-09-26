@@ -23,23 +23,26 @@ Method, per tile at the native 0.025 m, in `params.workers` processes:
    tubes and stakes stay within about 0.75 m of theirs); or small bright white blobs of 0.02-0.15 m2 with luminance
    >= 220, chroma <= 20, distance >= 100, narrow spread >= 0.03 m, not a thin line and >= 0.55 m from a row axis;
    coloured blobs of >= 0.02 m2 with chroma >= 80 and distance >= 100; black blobs never (vine shadows).
-   `accept_rest` elsewhere: white blobs of 0.03-1.5 m2, not a smooth disc (well lids), clipped share >= 0.1, chroma
-   <= 20, luminance spread >= 9.5, lying in vegetation (ring green >= 0.5), clear of pale structures and >= 10 m
-   from buildings; luminance >= 225, density <= 0.03 and >= 1.5 m from a row outside the blocks' 10 m reach, or
-   luminance >= 220, density <= 0.10 and >= 1.2 m from a row in a block or its headland; blue blobs (hue 185-265) of
-   0.04-1.5 m2 with luminance spread >= 20 and the same surroundings. Vivid red and dark blobs never (roofs,
+   `accept_rest` elsewhere: white blobs of 0.03-1.5 m2, not a smooth disc (well lids), clipped share >= 0.05, chroma
+   <= 25, luminance spread >= 9.5, lying in vegetation (ring green >= 0.5), clear of pale structures, >= 10 m from
+   buildings and >= 0.55 m from a row axis (as the small tier); luminance >= 225 and density <= 0.03 outside the
+   blocks' 10 m reach, or luminance >= 220 and density <= 0.10 in a block or its headland; blue blobs (hue 185-265)
+   of 0.04-1.5 m2 with luminance spread >= 20 and the same surroundings. Vivid red and dark blobs never (roofs,
    machinery, flowers, shadows).
 
-Labelled set (research/review/eval_waste.py, 18:50; in-sample, the thresholds were set with these labels in view):
-the user's review-tool answers (72 waste, 327 not waste) and the earlier eye verdicts (10 likely, 76 not). Before
-(inter-rows only): 11 boxes, 7 labelled waste, 2 not, recall 7/82. Site-wide: 60 boxes, 23 labelled waste, 5 not,
-32 unlabelled (review cards S-*), precision 0.82 on the labelled boxes, recall 22/82, or 22/49 when the 33 waste
-answers that carry rule flags (tiny scraps, dull patches, stones, tubes) are left out. Control: 0 boxes on the two
-organizer example tiles. 228,726 candidates on 311 tiles in 40-100 s with 6 processes.
-Run: uv run --frozen python -m marcaj.waste (writes data/generated/work/waste/waste_sitewide.geojson and
+Labelled set (research/review/eval_waste.py, 19:55; in-sample, the thresholds were set with these labels in view):
+the user's 136 waste and 563 not-waste review answers plus the earlier eye verdicts; labels on the two organizer
+example tiles count as not waste (their reference has none). On the 90 waste answers without rule flags: 74 boxes,
+45 on labelled waste, 14 on labelled not, 15 unlabelled, precision 0.76, recall 43/90, F1 0.56 (unlabelled boxes
+count half) against 0.51 for the 18:50 verifier (60 boxes, recall 37/90). Split at northing 5220200: north F1 0.571
+-> 0.564, south 0.456 -> 0.550. Boxes are tight: against a whitish region grown around each confirmed item the median
+IoU is 0.79. Control: 0 boxes on the two organizer example tiles. 228,726 candidates on 311 tiles in 90 s with 2
+processes (1.2 GB peak).
+Run: uv run --frozen python -m marcaj.waste [--workers N] (writes data/generated/work/waste/waste_sitewide.geojson and
 candidates_site.json)."""
 
 import json
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -90,7 +93,7 @@ class WasteParams:
     small_lum: float = 220.0
     small_chroma: float = 20.0
     small_dev: float = 100.0
-    small_row_m: float = 0.55
+    row_m: float = 0.55            # white blobs nearer a row axis are tubes, stakes or posts: the small tier and everywhere outside the inter-rows
     small_min_width_m: float = 0.03
     colour_area_m2: float = 0.02
     colour_min_chroma: float = 80.0
@@ -101,19 +104,17 @@ class WasteParams:
     rest_area_m2: tuple[float, float] = (0.03, 1.5)
     rest_blue_area_m2: tuple[float, float] = (0.04, 1.5)
     rest_lum: float = 225.0
-    rest_chroma: float = 20.0
-    rest_clipped: float = 0.10     # share of pixels with every channel >= 235
+    rest_chroma: float = 25.0
+    rest_clipped: float = 0.05     # share of pixels with every channel >= 235
     rest_texture: float = 9.5      # luminance std; smooth discs are well lids, smooth pale patches are soil or stone
     rest_blue_texture: float = 20.0  # planters, pools and roofs are smooth
     rest_fill: float = 0.35
     rest_ring_green: float = 0.5   # litter lies in vegetation; pale soil, tracks and yards do not
     rest_density: float = 0.03     # other evidence within 3 m: blossom, stone fields and roof clutter are dense
     building_m: float = 10.0       # distance to the organizers' forbidden zones (buildings, compounds)
-    rest_row_m: float = 1.5        # white tubes and stakes lying beside the rows
     # in a block or within reach_m of one (headlands, field edges) the white tests are looser: litter is likelier there
     near_lum: float = 220.0
     near_density: float = 0.10
-    near_row_m: float = 1.2
     reach_m: float = 10.0          # vineyard_id: the block it lies in, or the nearest block within 10 m (rules, section 3)
     pad_m: float = 0.025
     workers: int = 6
@@ -304,7 +305,7 @@ def accept(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
                   and c["chroma"] <= params.white_chroma and c["dev"] >= params.white_dev and c["row_m"] >= params.white_row_m)
         small = (params.small_area_m2[0] <= c["area_m2"] <= params.small_area_m2[1] and c["width_m"] >= params.small_min_width_m
                  and c["lum"] >= params.small_lum and c["chroma"] <= params.small_chroma and c["dev"] >= params.small_dev
-                 and c["row_m"] >= params.small_row_m)
+                 and c["row_m"] >= params.row_m)
         return strict or small
     if c["kind"] == "colour":
         return c["area_m2"] >= params.colour_area_m2 and c["chroma"] >= params.colour_min_chroma and c["dev"] >= params.colour_dev
@@ -318,7 +319,7 @@ def accept_rest(c: dict[str, Any], params: WasteParams = WasteParams()) -> bool:
     near = c["location"] in ("block", "headland")
     context = (c["structure"] == 0 and c["fill"] >= params.rest_fill and c["ring_green"] >= params.rest_ring_green
                and c["density"] - area / 9 <= (params.near_density if near else params.rest_density) and c["forbidden_m"] >= params.building_m
-               and c["row_m"] >= (params.near_row_m if near else params.rest_row_m))
+               and c["row_m"] >= params.row_m)
     if not context:
         return False
     if c["kind"] == "white":
@@ -386,7 +387,8 @@ def detect(tiles: list[Tile], predictions: list[dict[str, Any]], data_dir: Path 
 def main() -> None:
     started = time.perf_counter()
     predictions = json.loads(PREDICTIONS_PATH.read_text(encoding="utf-8"))["features"]
-    features, found = detect(load_tiles(), predictions)
+    workers = int(sys.argv[sys.argv.index("--workers") + 1]) if "--workers" in sys.argv else WasteParams.workers
+    features, found = detect(load_tiles(), predictions, params=WasteParams(workers=workers))
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     (WORK_DIR / "candidates_site.json").write_text(json.dumps([c for c in found if c["area_m2"] >= 0.02]), encoding="utf-8")
     path = WORK_DIR / "waste_sitewide.geojson"

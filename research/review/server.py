@@ -37,7 +37,8 @@ TO_WORLD = Transformer.from_crs("EPSG:4326", "EPSG:32635", always_xy=True).trans
 # answer key -> (object verdict, reason) per tab
 ANSWERS = {
     "waste": {"waste": ("right", "waste"), "not_waste": ("wrong", "not waste"), "unsure": ("unsure", "unsure")},
-    "gaps": {"real_gap": ("right", "real gap"), "vines_present": ("wrong", "vines present (missed canopy)"), "partly": ("partly", "partly a gap")},
+    "gaps": {"real_gap": ("right", "real gap"), "vines_present": ("wrong", "vines present (missed canopy)"), "partly": ("partly", "partly a gap"),
+             "not_a_row": ("wrong", "not a row (no vine row here)")},
     "canopies": {"one_plant": ("right", "one plant"), "several": ("wrong", "several touching plants"), "not_vine": ("wrong", "not a vine")},
 }
 LABEL = {"waste": ("waste", "waste_candidate"), "gaps": ("inspection", "poi"), "canopies": ("vineyard", "prediction")}

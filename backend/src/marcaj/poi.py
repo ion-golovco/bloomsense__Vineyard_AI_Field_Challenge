@@ -52,8 +52,8 @@ MAX_GREEN = 0.75    # share of a gap with vine green (rows.VINE_RUN_M runs) abov
 LOW_ROW = 0.25      # planted share of a row under which its gaps are in doubt
 MAX_PLANTING_M = 15.0  # a longer unplanted row end is a misplaced row, not missing vines
 # a stretch this close to an obstacle runs up to it, not into missing vines; a hut standing in a block has its own yard:
-# the V21-13 rows stop 5.6-6.0 m short of its roof (a building beyond the block edge gets the tree reach)
-OBSTACLE_M = {"tree": 2.0, "building": 6.5}
+# the V21-13 rows stop 4.6-5.0 m short of its roof (a building beyond the block edge gets the tree reach)
+OBSTACLE_M = {"tree": 2.0, "building": 6.0}
 
 
 @dataclass

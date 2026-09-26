@@ -13,7 +13,7 @@ from rasterio.transform import Affine, from_origin
 from scipy import ndimage
 from shapely.geometry import LineString, Point, Polygon, mapping, shape
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
+from shapely.ops import split, unary_union
 
 from marcaj.layers import exg
 from marcaj.tiles import PIXEL_M, TILE_PX, Tile
@@ -28,6 +28,7 @@ COVER_BARE, COVER_VEGETATION = 0.25, 0.75
 STRAY_SHARE = 0.7         # of the plot's row spacing; 0 turns the stray-row filter off
 EXTEND_M = 1.5            # 0 turns the extension off
 MIN_PIECE_M2 = 0.1        # tile-edge slivers; the smallest reference inter-row is 7.5 m2
+OBSTACLE_PIECE_M2 = 1.0   # crescents left between a tree crown and the row are not inter-row
 
 
 def _direction(line: LineString) -> np.ndarray:
@@ -72,13 +73,33 @@ def kept_rows(features: list[dict[str, Any]]) -> dict[str, list[tuple[str, LineS
     return out
 
 
-def interrow_areas(features: list[dict[str, Any]], exclusions) -> list[dict[str, Any]]:
+def cut_obstacles(polygon: Polygon, obstacles: BaseGeometry, across: np.ndarray) -> list[Polygon]:
+    """`polygon` minus `obstacles` (the rules: "Holes: cut out trees and buildings standing in the inter-row") as single
+    rings, since a CVAT polygon has no holes: a hole is split across the inter-row (`across`) through its centre, so the
+    pieces keep the exact area. Pieces under `OBSTACLE_PIECE_M2` go."""
+    rest = polygon.difference(obstacles)
+    out = []
+    for part in getattr(rest, "geoms", [rest]):
+        if part.geom_type != "Polygon":
+            continue
+        pieces = [part]
+        for hole in part.interiors:
+            centre = np.asarray(Polygon(hole).centroid.coords[0])
+            line = LineString([centre - across * polygon.length, centre + across * polygon.length])
+            pieces = [piece for whole in pieces for piece in split(whole, line).geoms]
+        out += [piece for piece in pieces if piece.geom_type == "Polygon" and piece.area >= OBSTACLE_PIECE_M2]
+    return out
+
+
+def interrow_areas(features: list[dict[str, Any]], exclusions, obstacles: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:
     """One polygon between each pair of neighbouring rows of a row pattern (`kept_rows`): inset `INTERROW_INSET_M` from
     both axes, ending where the shorter row ends (the rules), minus `exclusions`. An end within `EXTEND_M` of an
     exclusion is carried onto it: the plot's road setback stops rows 0.95 m short of the passages at 547 of 640 row ends,
     where the vines visibly run on into the passage polygon, and without this no inter-row touches a passage. Each takes
-    its rows' vineyard_id and pattern_id."""
+    its rows' vineyard_id and pattern_id. `obstacles` (`marcaj.obstacles` features) are cut out (`cut_obstacles`), which
+    may leave several pieces of one inter-row."""
     block = {_pattern(f["properties"]): f["properties"]["vineyard_id"] for f in features if f["properties"]["label"] == "row"}
+    blockers = unary_union([shape(f["geometry"]) for f in obstacles]) if obstacles else None
     areas = []
     for pattern_id, rows in kept_rows(features).items():
         along = _direction(rows[0][1])
@@ -98,8 +119,11 @@ def interrow_areas(features: list[dict[str, Any]], exclusions) -> list[dict[str,
             polygon = box(u0, u1).difference(exclusions)
             parts = [part for part in getattr(polygon, "geoms", [polygon]) if part.geom_type == "Polygon"]
             if parts:
-                areas.append({"type": "Feature", "geometry": mapping(max(parts, key=lambda part: part.area)),
-                              "properties": {"label": "interrow_area", "vineyard_id": block[pattern_id], "pattern_id": pattern_id, "interrow_cover": "bare_soil"}})
+                largest = max(parts, key=lambda part: part.area)
+                pieces = cut_obstacles(largest, blockers, across) if blockers is not None and largest.intersects(blockers) else [largest]
+                areas += [{"type": "Feature", "geometry": mapping(piece),
+                           "properties": {"label": "interrow_area", "vineyard_id": block[pattern_id], "pattern_id": pattern_id, "interrow_cover": "bare_soil"}}
+                          for piece in pieces]
     return areas
 
 
