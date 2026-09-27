@@ -1,6 +1,6 @@
 # Demo: 2 minutes, on stage
 
-Start everything with one command from the repo root, 2 minutes before the slot (a cold route plan takes about 2 minutes to warm up):
+Start everything with one command from the repo root, at least 6 minutes before the slot: after new data the app builds its route plan once (about 5 minutes for 290 targets; later starts load it from disk in seconds):
 
 ```sh
 scripts/demo.sh            # app on http://127.0.0.1:8000 and the Telegram bot; Ctrl+C stops both
@@ -25,5 +25,5 @@ The bot reads `TELEGRAM_BOT_TOKEN` from `.env`. Only one bot process may run per
 
 - **No internet (the bot needs it):** show `output/demo/5_telegram_V06-03.png` and the checklist text in `output/demo/5_telegram_V06-03.txt`.
 - **App not loading:** use the screenshots in `output/demo/` (1 all fields, 2 per field, 3 measurements, 4 farmer view).
-- **Plan route is slow:** the first plan after a restart warms up for about 2 minutes; skip that step and show the precomputed site route.
+- **Plan route is slow:** the plan is still warming up after new data (about 5 minutes); skip that step and show the precomputed site route.
 - Re-render the bot images offline: `cd backend && uv run --frozen python -m marcaj.telegram_bot --render V06-03 --out ../output/demo/5_telegram_V06-03.png`.

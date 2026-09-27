@@ -42,6 +42,14 @@ passes (the weedy part of a vineyard). On the v3 prediction it drops 4 blocks (s
 1,303 m2, none on any outline) and keeps the young strips #8, #9, #26 and the unoutlined vine strips V22-15 and V37-22
 (research/probes/plots_verify_*.py).
 
+v6, against the team's hand-corrected Marcaj rows (the reference is v5 plus their edits; research/probes/v6_rows_*.py,
+data/generated/work/v6/rows/STATUS.md): judge axis F1 over all 1,978 reference pieces 0.816 (v5) -> 0.827. Two changes hold:
+an edge across the rows moves onto a road only when the ground up to it carries the rows (`road_rows`; V09-01's rows
+end in a headland), and verify_plots drops a pattern's bare outermost rows (`verify_outer`: 41 of the 75 v5 rows the
+team deleted were a pattern's outermost row). Every seed, walk, parcel and end-shape parameter sits at its best value
+on this metric, and moving row ends by image evidence (ExG tube contrast or canopy) moves more ends the team left alone
+than ones they cut.
+
 Against the 35 hand-drawn vineyard outlines (`judge.plot_scores`, north tunes, south validates;
 research/probes/plots_recall_eval.py): vineyard area recall 0.86 (0.82 before the second pass, parcels and spacing
 rules), area IoU 0.83 north and 0.73 south; 140 m2 on orchard outlines (1,914 before). Per block (assign_blocks,
@@ -87,6 +95,7 @@ class PlotParams:
     square_deg: float = 10.0      # row ends within this of square to the rows are squared off
     road_reach_m: float = 5.0     # an edge this close to a road is moved onto it
     road_setback_m: float = 1.0   # ...stopping this far short of the road boundary
+    road_rows: float = 0.4        # ...and, across the rows, only where the ground up to it carries the rows at this share of the plot's wave (team's rows: 0.791 -> 0.795); 0 = always
     min_area_m2: float = 150.0
     min_row_m: float = 2.0
     peak_reach: float = 0.6       # a row axis is the highest across-row ExG peak within this many spacings (0.35 kept grass strips 1.1-1.35 m from a row)
@@ -122,6 +131,9 @@ class PlotParams:
     verify_contrast: float = 0.015  # mosaic ExG on the rows minus halfway between them (outlined 0.033+, a weed strip 0.010)
     verify_vine_m: float = 4.0    # a median canopy piece longer than this (a vine is at most ~2.5 m; outlined up to 3.6, scrub 4.1-5.1) makes the rows hedges...
     verify_hedge: float = 0.5     # ...and a vine hedge covers at least this share of its rows (outlined hedges 0.50-0.72, scrub 0.38-0.40)
+    verify_outer: float = 0.3     # a pattern's outermost row goes when its canopy cover is under this share of the pattern's median row (a verge); 0 = off
+    verify_outer_min: float = 0.1  # ...in patterns whose median row has at least this canopy cover
+    verify_outer_n: int = 2       # ...and inward up to this many rows per side while each is bare (team's rows on v5: 0.816 -> 0.826)
 
 
 class _Excess:
@@ -455,7 +467,7 @@ def _overgrown(fitted: list, excess: _Excess, roads, usable_at, parcels: list, p
         if result is None or len(result[1]) < params.strip_min_rows:
             continue
         # inside the uncovered rest only: a weedy parcel never takes over a plot the first passes fitted
-        polygon = _largest(_onto_roads(result[0], roads, params).intersection(region.buffer(0.5)))
+        polygon = _largest(_onto_roads(result[0], roads, params, (clipped, best[1], best[2])).intersection(region.buffer(0.5)))
         if polygon.area >= params.strip_min_m2:
             out.append((polygon, best[1], best[2], result[1]))
     return out
@@ -481,25 +493,42 @@ def _merge(fitted: list, excess: _Excess, roads, params: PlotParams) -> list:
             if result is None or pa.area + pb.area < 0.8 * result[0].area:
                 j += 1
                 continue
-            fitted[i] = (_largest(_onto_roads(result[0], roads, params)), aa, sa, result[1])
+            fitted[i] = (_largest(_onto_roads(result[0], roads, params, (excess, aa, sa))), aa, sa, result[1])
             del fitted[j]
             j = i + 1
     return fitted
 
 
-def _onto_roads(quad: Polygon, roads, params: PlotParams) -> Polygon:
-    """Moves each edge that has a road within `road_reach_m` outward, then clips at the road less the setback."""
+def _onto_roads(quad: Polygon, roads, params: PlotParams, lattice: tuple | None = None) -> Polygon:
+    """Moves each edge that has a road within `road_reach_m` outward, then clips at the road less the setback.
+    With `lattice` (excess, angle, spacing) and `road_rows`, an edge across the rows moves only when the ground up to
+    the road carries the plot's rows (across-row wave >= `road_rows` of the plot's, in phase): a grass headland
+    between the last vines and the road stays out (V09-01's rows end 3-4 m short of the road, V08-04's run on to it)."""
     ring = list(shapely.remove_repeated_points(quad, 1e-6).exterior.coords)[:-1]
     if len(ring) < 3:
         return quad.difference(roads.buffer(params.road_setback_m))
     if quad.exterior.is_ccw is False:
         ring = ring[::-1]
+    check = lattice is not None and params.road_rows > 0
+    if check:
+        excess, angle, spacing = lattice
+        origin = np.asarray(quad.centroid.coords[0])
+        own = _phasor(excess, quad, angle, spacing, origin)
+        along = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle))])
     lines = []
     for a, b in zip(ring, ring[1:] + ring[:1]):
         a, b = np.asarray(a), np.asarray(b)
         normal = np.array([b[1] - a[1], a[0] - b[0]]) / np.hypot(*(b - a))  # outward for a counter-clockwise ring
         strip = Polygon([a, b, b + normal * params.road_reach_m, a + normal * params.road_reach_m])
         shift = params.road_reach_m if strip.intersection(roads).area > 0.1 * strip.area else 0.0
+        if shift and check and abs(normal @ along) > np.cos(np.radians(45)):
+            free = _largest(strip.difference(roads.buffer(params.road_setback_m)))
+            # under 2 m to the road the phasor has too few pixels per row; the move is small anyway
+            if free.area > 2.0 * np.hypot(*(b - a)):
+                wave = _phasor(excess, free, angle, spacing, origin)
+                phase = abs((np.angle(wave) - np.angle(own) + np.pi) % (2 * np.pi) - np.pi) / (2 * np.pi)
+                if abs(wave) < params.road_rows * abs(own) or phase > params.parcel_phase:
+                    shift = 0.0
         lines.append((a + normal * shift, b - a))
     corners = []
     for (p1, d1), (p2, d2) in zip(lines[-1:] + lines[:-1], lines):
@@ -585,7 +614,7 @@ def detect_plots(params: PlotParams = PlotParams(), data_dir: Path = DATA_DIR, l
             result = _walk(excess, region, angle, spacing, usable_at, params)
             if result is None:
                 continue
-            polygon = _largest(_onto_roads(result[0], roads, params))
+            polygon = _largest(_onto_roads(result[0], roads, params, (excess, angle, spacing)))
             # weaker seeds need a few rows and some area
             if strict and (len(result[1]) < params.strip_min_rows or polygon.area < params.strip_min_m2):
                 continue
@@ -794,7 +823,54 @@ def verify_plots(found: list[dict[str, Any]], canopies: list[dict[str, Any]], pa
             if p["label"] == "block":
                 q["vine_evidence"] = rounded(evidence[old])
             out[side].append({**f, "properties": q})
-    return out[0], out[1], dropped
+    return (*bare_outer_rows(out[0], out[1], params), dropped)
+
+
+def bare_outer_rows(found: list[dict[str, Any]], canopies: list[dict[str, Any]], params: PlotParams = PlotParams()) -> tuple[list, list]:
+    """Drops a row pattern's outermost row, on either side, whose canopy covers under `verify_outer` of the pattern's
+    median row (patterns whose median row has `verify_outer_min` cover or more), with the canopy on it. The team deleted
+    75 v5 rows in Marcaj, 41 of them a pattern's outermost row: a green verge, a weed line or a track edge along the
+    plot, where the tube-minus-flank ExG that seeds and walks the rows sees a row. Cover is the canopy share of a
+    +-0.35 m band on the row (on v5: deleted outermost rows median 0.0 of the pattern's median, kept ones 0.93)."""
+    if not params.verify_outer:
+        return found, canopies
+    key = lambda p: p.get("pattern_id") or p.get("vineyard_id", "")
+    pieces: dict[str, list] = defaultdict(list)
+    for f in canopies:
+        pieces[key(f["properties"])].append(shape(f["geometry"]))
+    rows: dict[str, list] = defaultdict(list)
+    for i, f in enumerate(found):
+        if f["properties"]["label"] == "row":
+            rows[key(f["properties"])].append(i)
+    gone, bands = set(), []
+    for pattern, indices in rows.items():
+        if len(indices) < 3:
+            continue
+        lines = [shape(found[i]["geometry"]) for i in indices]
+        a, b = np.asarray(lines[0].coords)[[0, -1]]
+        normal = np.array([-(b - a)[1], (b - a)[0]]) / np.linalg.norm(b - a)
+        order = np.argsort([np.asarray(line.centroid.coords[0]) @ normal for line in lines])
+        tree = STRtree(pieces[pattern]) if pieces[pattern] else None
+        cover = []
+        for line in lines:
+            band = line.buffer(0.35, cap_style="flat")
+            hits = [] if tree is None else [pieces[pattern][k] for k in tree.query(band, predicate="intersects")]
+            cover.append(unary_union([h.intersection(band) for h in hits]).area / (0.7 * line.length) if hits else 0.0)
+        median = float(np.median(cover))
+        if median < params.verify_outer_min:
+            continue
+        for side in (order[:params.verify_outer_n], order[::-1][:params.verify_outer_n]):
+            for k in side:  # inward while the new outermost row is bare too
+                if cover[k] >= params.verify_outer * median or len(gone & set(indices)) >= len(indices) - 2:
+                    break
+                gone.add(indices[k])
+                bands.append((pattern, lines[k].buffer(0.6)))
+    drop = defaultdict(list)
+    for pattern, band in bands:
+        drop[pattern].append(band)
+    kept = [f for i, f in enumerate(found) if i not in gone]
+    kept_canopies = [f for f in canopies if not any(band.contains(shape(f["geometry"]).centroid) for band in drop.get(key(f["properties"]), []))]
+    return kept, kept_canopies
 
 
 def _tile_id(point) -> str:

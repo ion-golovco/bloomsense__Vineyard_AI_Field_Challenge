@@ -22,6 +22,11 @@ FIELDS = [
     "canopy_area_m2", "canopy_area_ha", "interrow_area_m2", "interrow_area_ha",
 ]
 ORGANIZER_CRS = {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32635"}}
+# marcaj-export warns when the submission route is more than PLAIN_MARGIN outside the scene's own inter-rows and
+# passages, or more than ROBUST_MARGIN outside them eroded 0.3 m: margins under the 2% zero-score line in case the
+# organizers' inter-rows differ from the Marcaj export's
+PLAIN_MARGIN = 0.012
+ROBUST_MARGIN = 0.019
 
 
 def _write_route(scene: dict[str, Any], output_dir: Path, poi: Path | None, confidence_over: float | None, budget: float, routes_path: Path,
@@ -59,6 +64,10 @@ def _write_route(scene: dict[str, Any], output_dir: Path, poi: Path | None, conf
     if not official["properties"]["closed"] or not official["properties"]["legal"]:
         raise ValueError("The route would score 0 or cross forbidden space or canopy: it must start and end within 5 m of its start and end "
                          "points, stay 98% inside passable space and keep out of forbidden zones and mature canopies")
+    if official["properties"]["outside_share"] > PLAIN_MARGIN or official["properties"]["robust_outside_share"] > ROBUST_MARGIN:
+        print(f"WARNING: the route is {official['properties']['outside_share']:.2%} outside the scene's inter-rows and passages and "
+              f"{official['properties']['robust_outside_share']:.2%} outside them eroded 0.3 m, over the {PLAIN_MARGIN:.1%} / {ROBUST_MARGIN:.1%} margins "
+              f"kept under the 2% zero-score line in case the organizers' inter-rows differ: rerun with a lower --outside-budget")
     collection = {
         "type": "FeatureCollection", "crs": ORGANIZER_CRS,
         "features": [{"type": "Feature", "geometry": mapping(line), "properties": {"length_m": round(line.length, 3)}}],
@@ -95,7 +104,7 @@ def main() -> None:
     parser.add_argument("--poi", type=Path, help="inspection points GeoJSON (marcaj.poi output); only challenge: true points are route targets")
     parser.add_argument("--poi-confidence-over", type=float, help="keep only POIs with confidence above this (default: all)")
     parser.add_argument("--routes", type=Path, default=REPO_ROOT / "data" / "generated" / "routes.geojson", help="the client's routes: site-wide and per field, per POI confidence cutoff")
-    parser.add_argument("--outside-budget", type=float, default=OUTSIDE_BUDGET, help=f"share of the route allowed outside passable space eroded by 0.3 m (default {OUTSIDE_BUDGET}; the zero-score limit is 0.02)")
+    parser.add_argument("--outside-budget", type=float, default=OUTSIDE_BUDGET, help=f"share of the route allowed outside passable space eroded by 0.3 m (default {OUTSIDE_BUDGET}; the zero-score limit is 2%% outside the uneroded space)")
     parser.add_argument("--start", type=_easting_northing, help="E,N in EPSG:32635 (default: the organizer START)")
     parser.add_argument("--end", type=_easting_northing, help="E,N in EPSG:32635 (default: back to the start, a closed route)")
     parser.add_argument("--hop-penalty", type=float, default=HOP_PENALTY_M, help=f"equivalent metres per row hop (default {HOP_PENALTY_M})")

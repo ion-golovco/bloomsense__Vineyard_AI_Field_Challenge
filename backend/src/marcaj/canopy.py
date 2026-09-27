@@ -66,7 +66,13 @@ sheets; judge unchanged (0.8563 on the refit rows), user "not a vine" 10 -> 12 o
 foliage: CIELAB a* < -8 is a strict subset of 2g - r - b > 25 here, and the pixels the index misses (2g - r - b 15-25,
 a* -8..-2) overlap shadow and soil; the organizers' own row cover on r021_c012 (field V21-13) is 0.72, ours 0.73. Every
 recall variant (`grow_*` hysteresis, finer weak stretches, `tuft_m2`, Otsu) costs judge points and fills about as many
-real gaps as vines-present gaps, so they stay off."""
+real gaps as vines-present gaps, so they stay off.
+
+v6, 27 September (the team's corrected Marcaj rows as input; research/probes/v6_canopy_*.py, work/v6/canopy/STATUS.md):
+the refit weighs each metre by its green pixel count (`refine_weighted`): axes 1.44 -> 0.90 cm (median) from the
+organizers' rows, judge canopy 0.861 -> 0.865 on the team's rows, 0.857 -> 0.862 on the v5 rows (the organizers' own rows
+without refit give 0.892). Rows drawn in pieces joined at tile edges clip to slivers along the edge, which `kept_axes`
+now drops (it dropped the whole clipped row before). Every other default is still the best single value on these rows."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -103,6 +109,7 @@ class CanopyParams:
     split_piece_m: float = 0.3  # ...leaving at least this much canopy along the row on each side
     refine_m: float = 0.5      # re-fit each axis on the tile to green pixels within this distance; 0 = off
     refine2_m: float = 0.3     # ...then again within this distance of the first fit; 0 = off
+    refine_weighted: bool = True  # ...each metre's median weighted by its green pixel count
     otsu: bool = False         # threshold at Otsu's split of the index inside the tube instead
     row_contrast: float = 0.0  # drop an axis whose tube's green share is under this times its flanks'; 0 = off
     row_value: float = 1.2     # drop an axis whose tube's mean excess green is under this times its flanks'; 0 = off
@@ -230,17 +237,20 @@ def _pixels(geometry: BaseGeometry, transform: Affine, shape_: tuple[int, int]) 
     return rows + r0, cols + c0
 
 
-def _line_shift(u: np.ndarray, v: np.ndarray, g: np.ndarray, limit: float, length: float, bin_m: float) -> np.ndarray:
+def _line_shift(u: np.ndarray, v: np.ndarray, g: np.ndarray, limit: float, length: float, bin_m: float,
+                weighted: bool = False) -> np.ndarray:
     """Across-row shift at both ends of a straight line through the median `v` of the green pixels within `limit`,
-    per `bin_m` along the row, capped at `limit`; with fewer than 3 bins only an offset, with none zero."""
+    per `bin_m` along the row, capped at `limit`; with fewer than 3 bins only an offset, with none zero. `weighted`
+    weighs each bin by its green pixel count (a full plant counts more than a leaf tip or a weed at the band's edge)."""
     near = g & (np.abs(v) <= limit)
     bins = np.floor(u[near] / bin_m).astype(int)
     keys, counts = np.unique(bins, return_counts=True)
-    keys = keys[counts >= 20]  # a bin needs 125 cm2 of green
+    keys, counts = keys[counts >= 20], counts[counts >= 20]  # a bin needs 125 cm2 of green
     if not len(keys):
         return np.zeros(2)
     centres = np.array([np.median(v[near][bins == k]) for k in keys])
-    slope, offset = np.polyfit((keys + 0.5) * bin_m, centres, 1) if len(keys) >= 3 else (0.0, float(np.median(centres)))
+    w = np.sqrt(counts) if weighted else None  # polyfit weighs residuals: sqrt(count) is a count-weighted least squares
+    slope, offset = np.polyfit((keys + 0.5) * bin_m, centres, 1, w=w) if len(keys) >= 3 else (0.0, float(np.median(centres)))
     return np.clip(offset + slope * np.array([0.0, length]), -limit, limit)
 
 
@@ -259,9 +269,9 @@ def fit_axis(axis: LineString, green: np.ndarray, transform: Affine, params: Can
     d = np.array([x1 - x0, y1 - y0]) / length
     dx, dy = transform.c + (cols + 0.5) * transform.a - x0, transform.f + (rows + 0.5) * transform.e - y0
     u, v, g = dx * d[0] + dy * d[1], -dx * d[1] + dy * d[0], green[rows, cols]
-    shift = _line_shift(u, v, g, params.refine_m, length, bin_m) if params.refine_m else np.zeros(2)
+    shift = _line_shift(u, v, g, params.refine_m, length, bin_m, params.refine_weighted) if params.refine_m else np.zeros(2)
     if params.refine_m and params.refine2_m:
-        shift = shift + _line_shift(u, v - np.interp(u, [0.0, length], shift), g, params.refine2_m, length, bin_m)
+        shift = shift + _line_shift(u, v - np.interp(u, [0.0, length], shift), g, params.refine2_m, length, bin_m, params.refine_weighted)
     v = np.abs(v - np.interp(u, [0.0, length], shift))
     flank = g[(v >= FLANK_M[0]) & (v <= FLANK_M[1])]
     contrast = g[v <= params.tube_m].mean() / max(flank.mean() if len(flank) else 0.0, 1e-3)
@@ -320,7 +330,11 @@ def kept_axes(axes: list[LineString], green: np.ndarray, transform: Affine, para
     `excess` (`excess_green`) enables the `row_value` test, with `rgb` also the `grass_ratio` test."""
     bounds = box(*array_bounds(*green.shape, transform))
     clipped = [axis.intersection(bounds) for axis in axes]
-    fitted = [fit_axis(LineString(c.coords), green, transform, params) for c in clipped if c.geom_type == "LineString" and c.length > 0]
+    # a row drawn in pieces joined at the tile edge clips to its line plus slivers along the edge: those go, the rest are chords
+    edge = bounds.boundary.buffer(0.01)
+    chords = [LineString([p.coords[0], p.coords[-1]]) for c in clipped for p in getattr(c, "geoms", [c])
+              if p.geom_type == "LineString" and p.length > 0 and not p.within(edge)]
+    fitted = [fit_axis(chord, green, transform, params) for chord in chords if chord.length > 0]
     kept = [axis for axis, contrast in fitted if contrast >= params.row_contrast]
     kept = _drop_interrows(kept, green, transform, params, spacing_m) if params.row_gap else kept
     if params.row_value and excess is not None:

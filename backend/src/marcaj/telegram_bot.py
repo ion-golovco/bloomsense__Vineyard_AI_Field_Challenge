@@ -387,10 +387,14 @@ def check(result: dict[str, Any], rgb: np.ndarray, meta: dict[str, Any], text: s
         dense = np.asarray(line.segmentize(0.25).coords)
         along = np.r_[0.0, np.cumsum(np.hypot(*np.diff(dense, axis=0).T))]
         positions = []
+        a, d = dense[:-1], np.diff(dense, axis=0)
         for stop in stops:
-            near = np.flatnonzero(np.hypot(dense[:, 0] - stop["point"].x, dense[:, 1] - stop["point"].y) <= stop["reach"] + 0.25)
+            # exact distance to each densified segment, at the same reach as the walk: a looser radius picks up an earlier near-pass
+            p = np.array([stop["point"].x, stop["point"].y])
+            t = np.clip(((p - a) * d).sum(axis=1) / np.maximum((d ** 2).sum(axis=1), 1e-12), 0.0, 1.0)
+            near = np.flatnonzero(np.hypot(*(a + t[:, None] * d - p).T) <= stop["reach"] + 1e-6)
             assert near.size, f"route never passes {stop['id']}"
-            positions.append(along[near[0]])
+            positions.append(along[near[0]] + t[near[0]] * np.hypot(*d[near[0]]))
         assert all(a <= b + 0.5 for a, b in zip(positions, positions[1:])), "checklist is not in the order the route passes the stops"
         at = -1
         for number, stop in enumerate(stops, start=1):
@@ -405,8 +409,11 @@ def check(result: dict[str, Any], rgb: np.ndarray, meta: dict[str, Any], text: s
         samples = [line.interpolate(k / 40, normalized=True) for k in range(40)]
         cols_rows = [~meta["transform"] * (p.x, p.y) for p in samples]
         in_view = [(int(r), int(c)) for c, r in cols_rows if 0 <= r < rgb.shape[1] and 0 <= c < rgb.shape[2]]
-        on_route = sum(tuple(rgb[:, r, c]) == ROUTE_RGB for r, c in in_view)
-        assert in_view and on_route >= len(in_view) / 3, "route line is not on the picture"
+        # samples under a stop marker or its digits don't count: on the farm picture 200+ markers cover much of the line
+        markers = {MISSING_RGB, WASTE_RGB, SKIPPED_RGB, START_RGB, BLACK}
+        free = [(r, c) for r, c in in_view if tuple(rgb[:, r, c]) not in markers]
+        on_route = sum(tuple(rgb[:, r, c]) == ROUTE_RGB for r, c in free)
+        assert free and on_route >= len(free) / 3, "route line is not on the picture"
 
 
 @lru_cache(maxsize=64)

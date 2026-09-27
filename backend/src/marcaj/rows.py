@@ -73,6 +73,12 @@ def kept_rows(features: list[dict[str, Any]]) -> dict[str, list[tuple[str, LineS
     return out
 
 
+def _across_at(line: LineString, along: np.ndarray, across: np.ndarray):
+    """The line's across-row position as a function of the along-row position (through its end points)."""
+    (t0, w0), (t1, w1) = ((float(np.asarray(p) @ along), float(np.asarray(p) @ across)) for p in (line.coords[0], line.coords[-1]))
+    return lambda u: w0 + (w1 - w0) * (u - t0) / (t1 - t0) if t1 != t0 else w0
+
+
 def cut_obstacles(polygon: Polygon, obstacles: BaseGeometry, across: np.ndarray) -> list[Polygon]:
     """`polygon` minus `obstacles` (the rules: "Holes: cut out trees and buildings standing in the inter-row") as single
     rings, since a CVAT polygon has no holes: a hole is split across the inter-row (`across`) through its centre, so the
@@ -107,12 +113,16 @@ def interrow_areas(features: list[dict[str, Any]], exclusions, obstacles: list[d
         frame = lambda u, w: along * u + across * w
         for (_, a), (_, b) in zip(rows[:-1], rows[1:]):
             (ua0, ua1), (ub0, ub1) = (sorted(np.asarray(line.coords) @ along) for line in (a, b))
-            va, vb = sorted(float(np.asarray(line.centroid.coords[0]) @ across) for line in (a, b))
             u0, u1 = max(ua0, ub0), min(ua1, ub1)
-            v0, v1 = va + INTERROW_INSET_M, vb - INTERROW_INSET_M
-            if u1 <= u0 or v1 <= v0:
+            if u1 <= u0:
                 continue
-            box = lambda lo, hi: Polygon([frame(lo, v0), frame(hi, v0), frame(hi, v1), frame(lo, v1)])
+            # each side on its own row line: rows drawn by hand fan out (V35-25 by 3.6 deg), a box at the centroids would
+            # run into them; on a lattice (parallel rows) this is the box
+            fa, fb = sorted((_across_at(line, along, across) for line in (a, b)), key=lambda f: f((u0 + u1) / 2))
+            if min(fb(u0) - fa(u0), fb(u1) - fa(u1)) <= 2 * INTERROW_INSET_M:
+                continue
+            box = lambda lo, hi: Polygon([frame(lo, fa(lo) + INTERROW_INSET_M), frame(hi, fa(hi) + INTERROW_INSET_M),
+                                          frame(hi, fb(hi) - INTERROW_INSET_M), frame(lo, fb(lo) - INTERROW_INSET_M)])
             if EXTEND_M:
                 u0 -= EXTEND_M * box(u0 - EXTEND_M, u0).intersects(exclusions)
                 u1 += EXTEND_M * box(u1, u1 + EXTEND_M).intersects(exclusions)
@@ -187,15 +197,38 @@ def per_tile(features: list[dict[str, Any]], tiles: list[Tile]) -> list[dict[str
         visible = bounds if not nodata.any() else bounds.intersection(unary_union(
             [shape(g) for g, _ in shapes(np.uint8(~nodata), mask=~nodata, transform=_transform(tile) * Affine.scale(8))]).simplify(0.2))
         edge = visible.boundary
+        rim = edge.buffer(0.01)
+        start = len(out)
         for i in hits:
             piece = geometries[i].intersection(visible)
             properties = dict(split[i]["properties"], tile=tile.name)
             if properties["label"] == "row":
-                lines = [part for part in getattr(piece, "geoms", [piece]) if part.geom_type == "LineString" and part.length > 0]
+                # a row joined at the tile edge (drawn per tile) clips to its line plus slivers along the edge: not rows
+                lines = [part for part in getattr(piece, "geoms", [piece]) if part.geom_type == "LineString" and part.length > 0
+                         and not part.within(rim)]
                 for line in lines:
                     out.append({"type": "Feature", "geometry": mapping(line), "properties": {**properties, "row_structure": _row_structure(line, excess, tile, edge)}})
             else:
                 polygons = [part for part in getattr(piece, "geoms", [piece]) if part.geom_type == "Polygon" and part.area >= MIN_PIECE_M2]
                 for polygon in polygons:
                     out.append({"type": "Feature", "geometry": mapping(polygon), "properties": {**properties, "interrow_cover": _cover(polygon, excess, tile)}})
+        _holes(out[start:])
     return out
+
+
+def _holes(pieces: list[dict[str, Any]]) -> None:
+    """A row in several pieces on one tile (drawn so, or cut by no-data) has a hole between them: at `GAP_M` or more
+    every piece of it is `disrupted` (the organizer rule is a gap of 5 m within the tile; 11 of the team's rows)."""
+    by_row: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for f in pieces:
+        if f["properties"]["label"] == "row":
+            by_row[f["properties"]["row_id"]].append(f)
+    for group in by_row.values():
+        if len(group) < 2:
+            continue
+        lines = [shape(f["geometry"]) for f in group]
+        along = _direction(max(lines, key=lambda line: line.length))
+        spans = sorted(sorted(np.asarray(line.coords)[[0, -1]] @ along) for line in lines)
+        if any(b[0] - a[1] >= GAP_M for a, b in zip(spans[:-1], spans[1:])):
+            for f in group:
+                f["properties"]["row_structure"] = "disrupted"

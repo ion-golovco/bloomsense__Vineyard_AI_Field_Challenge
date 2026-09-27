@@ -77,6 +77,9 @@ def read_cvat(data: bytes, tiles: dict[str, Tile], source: str = "reference") ->
     features = []
     for image in ET.fromstring(data).iter("image"):
         name = Path(image.get("name", "")).name
+        prefix, _, rest = name.partition("_")
+        if name not in tiles and prefix.isdigit() and rest in tiles:
+            name = rest  # a Marcaj export prefixes its file id: "2788_siret3_r016_c007.tif"
         if name not in tiles:
             raise KeyError(f"CVAT image {name!r} is not one of the organizer tiles")
         tile = tiles[name]

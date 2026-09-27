@@ -60,8 +60,15 @@ OUTSIDE_WEIGHT = 60.0
 CORRIDOR_M = 12.0
 ATTACH_M = 1.75  # + SIMPLIFY_M stays inside the 2 m visit radius
 SIMPLIFY_M = 0.2
-OUTSIDE_BUDGET = 0.012
+# share of the route outside `robust_space` the tour may spend. Site all-POI route on carry2 (the team's Marcaj rows,
+# rule-compliant inter-rows; work/route_v4), robust budget -> visited, plain / robust outside: current POIs 1.2%
+# 129/192 0.59/1.14% · 1.6% 157 · 1.8% 161 0.93/1.60% · 1.9% 162 · 2.0% 173 (90.1%) 1.13/1.88%; organizer-style POIs
+# 1.2% 179/289 · 2.0% 239/289 1.11/1.82%. 2.0% keeps plain under 1.2% and robust under 1.9% there (the team's margins
+# under the 2% zero-score line) and is the first budget that reaches 90% of the targets. The Sunday chain on carry2
+# packed and read back: 174/194, 1.16% / 1.90%. marcaj-export warns over either margin (export.PLAIN_MARGIN).
+OUTSIDE_BUDGET = 0.02
 ROBUST_M = 0.3
+TILE_SNAP_M = 1e-3  # closes the per-tile seams between inter-row pieces before the erosion (`robust_space`)
 ROW_HALF_M = 0.3
 MAX_CANDIDATES = 3
 DETOUR_LIMIT = 80.0
@@ -91,7 +98,7 @@ HOP_MIN_STEP_M = 1.3  # longer than any grid step (1.12 m): a step this long in 
 SNAP_M = 25.0  # a requested start or end snaps to the nearest passable cell within this distance
 OPEN_LINK = 1e6  # the dummy END -> START leg of an open route costs -OPEN_LINK, so every tour move keeps it
 PLAN_CACHE = REPO_ROOT / "data" / "generated" / "work" / "route" / "cache"
-PLAN_VERSION = 7  # bump when the grid, hops or matrices change, so cached plans are rebuilt
+PLAN_VERSION = 8  # bump when the grid, hops or matrices change, so cached plans are rebuilt
 DEV_WORLD_SHARE = 0.25
 PLAN_FILES = 3
 # (drow, dcol, cells the step passes through that must be walkable too)
@@ -133,9 +140,15 @@ def robust_space(features: list[dict[str, Any]]):
     ends sit 0.3 m back from passages and sides 0.3 m in, in case the organizers' inter-rows are drawn tighter
     than ours. Planning on the scene's own inter-rows put 0.97% of the site route outside them but 1.89% outside
     these (every lane entry and exit adds its 0.3 m); budgeting 1.2% on these left 0.54% outside the scene's own
-    and 1.72% if every inter-row stopped 1 m short of its passage."""
+    and 1.72% if every inter-row stopped 1 m short of its passage.
+
+    Each inter-row piece grows TILE_SNAP_M (mitred: a round join cut ~5 cm corners off the eroded lanes) before the
+    union and the union shrinks back by as much: per-tile clipping leaves sub-micron gaps where one lane crosses a
+    tile edge, so the pieces did not merge and the erosion opened a 0.6 m outside strip across ~170 lanes (carry2:
+    905 -> 748 parts, site all-POI route 124 -> 129 of 192 at 1.2%). Only the planning space changes;
+    `routing.check_route` still measures the scene's own inter-rows."""
     passages = unary_union(_geometries(features, "passage"))
-    interrows = unary_union(_geometries(features, "interrow_area")).buffer(-ROBUST_M)
+    interrows = unary_union([piece.buffer(TILE_SNAP_M, join_style="mitre") for piece in _geometries(features, "interrow_area")]).buffer(-ROBUST_M - TILE_SNAP_M)
     return unary_union([passages, interrows]).difference(unary_union(_geometries(features, "forbidden")))
 
 

@@ -23,13 +23,19 @@ from marcaj.imagery import render_tile
 from marcaj.routing import _geometries
 from marcaj.scene import _TO_DISPLAY, OVERLAYS, browser_scene, load_projected_scene, scene_path
 
+def _version(path: Path) -> tuple[int, int]:
+    """Cache key of the route world: the scene file and the inspection points file (`OVERLAYS[0]`), whose targets the
+    plan is built on; either changing means a new world."""
+    return path.stat().st_mtime_ns, OVERLAYS[0].stat().st_mtime_ns if OVERLAYS[0].is_file() else 0
+
+
 def _warm_routes() -> None:
-    """Load (or build, about 2.5 min each) the scene's route plans, with and without row hops, so the first route
-    request is answered in seconds; a failure only means the first request builds its plan itself."""
+    """Load (or build, about 5 min for 290 targets) the scene's route plan with row hops, so the first route request
+    is answered in seconds; a failure only means the first request builds its plan itself."""
     path = scene_path()
     try:
-        for hops in (True, False):
-            _solve(str(path), path.stat().st_mtime_ns, None, None, "site", None, hops)
+        # hops only: the client always asks with hops on; the no-hop plan is the export's and takes minutes more
+        _solve(str(path), _version(path), None, None, "site", None, True)
     except Exception as error:  # noqa: BLE001 -- a warm-up must never stop the app
         print(f"route warm-up failed: {error!r}")
 
@@ -88,7 +94,7 @@ class RouteRequest(BaseModel):
 
 
 @lru_cache(maxsize=2)
-def _world(path: str, modified: int) -> dict[str, Any]:
+def _world(path: str, modified: tuple[int, int]) -> dict[str, Any]:
     """The route world of the scene file at `path` (see `route.planning_features`), its targets, the field ids and
     the plan cache token."""
     features, name = solver.planning_features(load_projected_scene())
@@ -109,7 +115,7 @@ def _projected(value: tuple[float, float] | Projected | None) -> tuple[float, fl
 
 
 @lru_cache(maxsize=16)
-def _solve(path: str, modified: int, start: tuple[float, float] | None, end: tuple[float, float] | None, scope: str, cutoff: float | None,
+def _solve(path: str, modified: tuple[int, int], start: tuple[float, float] | None, end: tuple[float, float] | None, scope: str, cutoff: float | None,
            hops: bool, kinds: frozenset[str] | None = None, closed: frozenset[str] = frozenset()) -> dict[str, Any]:
     """The route for one normalised request on the scene file `path` as of `modified`, cached so the download
     after a display request is instant. `kinds` keeps only `waste` and/or `canopy` targets; `closed` ids are left out."""
@@ -147,7 +153,7 @@ async def _request(request: Request) -> tuple[RouteRequest, dict[str, Any]]:
         raise HTTPException(status_code=422, detail=error.errors(include_url=False, include_context=False, include_input=False)) from error
     try:
         path = scene_path()
-        solved = await run_in_threadpool(_solve, str(path), path.stat().st_mtime_ns, _projected(query.start), _projected(query.end),
+        solved = await run_in_threadpool(_solve, str(path), _version(path), _projected(query.start), _projected(query.end),
                                          query.scope, query.min_confidence, query.hops, frozenset(query.kinds) if query.kinds else None,
                                          points.closed_ids() if query.open_only else frozenset())
     except ValueError as error:

@@ -3,7 +3,8 @@
 Gap POIs (`reason` `gap`) are the challenge route targets: a visible stretch of at least 5 m along a row with no vine,
 between two planted parts of the same global row, or a shorter one (from 3 m) that is an outlier against its field's own
 canopy spacing (`GAP_RULE` "deviation", `field_gap_m`). Each row is sampled every 5 cm along its axis across all its
-per-tile pieces (merged by `row_id`, so a gap across a tile edge is one gap, not two tile-edge stretches). A sample is
+per-tile pieces (merged by `row_id`, so a gap across a tile edge is one gap, not two tile-edge stretches; a hole of up to `MAX_BRIDGE_M`
+between two pieces of one row, as hand-drawn rows leave at missing vines, is sampled too: `_bridges`). A sample is
 planted when a canopy polygon lies within 0.3 m of the axis (the reference canopies are cut there). Pixel vine green
 (ExG > 0.11, runs >= 0.55 m, as `rows._row_structure`) is kept per gap as `green_share`, not as planted evidence: on
 the example tiles it breaks true reference gaps (recall 4/8 -> 3/8). A sample is hidden off every row piece, on
@@ -33,6 +34,7 @@ from rasterio.transform import from_origin
 from scipy import ndimage
 from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
+from shapely.geometry.base import BaseGeometry
 
 from marcaj.layers import exg
 from marcaj.obstacles import OBSTACLES_PATH
@@ -61,6 +63,11 @@ MAX_HIDDEN = 0.2    # share of a gap that may be hidden (no piece, no-data, shad
 MAX_GREEN = 0.75    # share of a gap with vine green (rows.VINE_RUN_M runs) above which it is a missed row, not a gap
 LOW_ROW = 0.25      # planted share of a row under which its gaps are in doubt
 MAX_PLANTING_M = 15.0  # a longer unplanted row end is a misplaced row, not missing vines
+MAX_BRIDGE_M = 15.0    # a longer hole between two pieces of one row is left unseen (a track or a misplaced piece)
+# organizer style (the team's choice, 27 Sep): canopies under this, counted whole across tile edges, are not planted
+# evidence. The organizers leave small young plants undrawn, so their own gaps hold them: 9/10 of their example gaps
+# found against 7/10 at 0 (research/probes/v6_poi_orgstyle.py; data/generated/work/v6/canopy/STATUS.md). 0 = every canopy counts
+PLANTED_MIN_M2 = 0.25
 # a stretch this close to an obstacle runs up to it, not into missing vines; a hut standing in a block has its own yard:
 # the V21-13 rows stop 4.6-5.0 m short of its roof (a building beyond the block edge gets the tree reach)
 OBSTACLE_M = {"tree": 2.0, "building": 6.0}
@@ -107,15 +114,61 @@ def _rows(features: list[dict[str, Any]]) -> list[_Row]:
         along = np.array([x1 - x0, y1 - y0]) / longest.length
         origin = np.array([x0, y0])
         u = np.concatenate([(np.asarray(line.coords) - origin) @ along for line in lines])
-        rows.append(_Row(vineyard_id, row_id, origin, along, float(u.min()), int(np.ceil((u.max() - u.min()) / SAMPLE_M)) + 1, lines))
+        rows.append(_Row(vineyard_id, row_id, origin, along, float(u.min()), int(np.ceil((u.max() - u.min()) / SAMPLE_M)) + 1,
+                         lines + _bridges(lines, origin, along)))
     return rows
 
 
-def sample_rows(features: list[dict[str, Any]], tiles: list[Tile] | None = None) -> list[_Row]:
-    """Every global row with its per-sample canopy, green, seen and dark flags, read from the tiles its pieces cross."""
+def _bridges(lines: list[LineString], origin: np.ndarray, along: np.ndarray) -> list[LineString]:
+    """Straight lines across the holes between a row's pieces, up to `MAX_BRIDGE_M` long, sampled like the pieces: a row
+    drawn by hand with a hole in it (the team left 5-7 m holes at missing vines in V06-03) is a visible unplanted stretch,
+    not an unseen one. Rows drawn continuously, or per tile meeting at the tile edge, have no holes."""
+    ends = []
+    for line in lines:
+        xy = np.asarray(line.coords)
+        t = (xy - origin) @ along
+        ends.append((float(t.min()), float(t.max()), xy[int(np.argmin(t))], xy[int(np.argmax(t))]))
+    ends.sort(key=lambda end: end[0])
+    out, reach, tip = [], ends[0][1], ends[0][3]
+    for lo, hi, start, stop in ends[1:]:
+        if SAMPLE_M < lo - reach <= MAX_BRIDGE_M:
+            out.append(LineString([tip, start]))
+        if hi > reach:
+            reach, tip = hi, stop
+    return out
+
+
+def planted_canopies(canopies: list[BaseGeometry], tiles: list[Tile], min_m2: float) -> list[BaseGeometry]:
+    """The canopies of at least `min_m2`, a plant cut by a tile edge counted whole: pieces on different tiles within 1 cm
+    of each other are one plant (canopies are traced per tile up to its edge)."""
+    if not min_m2 or not canopies:
+        return canopies
+    tile_tree = STRtree([tile.bounds for tile in tiles])
+    tile_of = [int(next(iter(tile_tree.query(g.representative_point(), predicate="intersects")), -1)) for g in canopies]
+    group = list(range(len(canopies)))
+
+    def root(i: int) -> int:
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+
+    for i, j in zip(*STRtree(canopies).query(canopies, predicate="dwithin", distance=0.01)):
+        if tile_of[i] != tile_of[j]:
+            group[root(i)] = root(j)
+    area = defaultdict(float)
+    for i, g in enumerate(canopies):
+        area[root(i)] += g.area
+    return [g for i, g in enumerate(canopies) if area[root(i)] >= min_m2]
+
+
+def sample_rows(features: list[dict[str, Any]], tiles: list[Tile] | None = None, min_canopy_m2: float | None = None) -> list[_Row]:
+    """Every global row with its per-sample canopy, green, seen and dark flags, read from the tiles its pieces cross.
+    `min_canopy_m2` (default `PLANTED_MIN_M2`) leaves smaller canopies out of the planted evidence (`planted_canopies`)."""
     tiles = tiles if tiles is not None else load_tiles(DATA_DIR)
     rows = _rows(features)
     canopies = [shape(f["geometry"]) for f in features if f["properties"].get("label") == "vineyard"]
+    canopies = planted_canopies(canopies, tiles, PLANTED_MIN_M2 if min_canopy_m2 is None else min_canopy_m2)
     canopy_tree = STRtree(canopies)
     piece_rows = [(row, piece) for row in rows for piece in row.pieces]
     piece_tree = STRtree([piece for _, piece in piece_rows])
@@ -359,7 +412,7 @@ def write(features: list[dict[str, Any]], path: Path = POI_PATH) -> Path:
 
 
 def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: bool = True, obstacles_path: Path = OBSTACLES_PATH,
-         rule: str = GAP_RULE, k: float = GAP_K, floor: float = GAP_FLOOR_M) -> None:
+         rule: str = GAP_RULE, k: float = GAP_K, floor: float = GAP_FLOOR_M, min_canopy_m2: float = PLANTED_MIN_M2) -> None:
     from marcaj import sentinel
 
     started = time.perf_counter()
@@ -369,7 +422,7 @@ def main(scene_path: Path = PREDICTIONS_PATH, out: Path = POI_PATH, satellite: b
         obstacles = json.loads(obstacles_path.read_text(encoding="utf-8"))["features"]
     if any(f["properties"].get("label") == "row" and f["properties"].get("source") == "reference" for f in features):
         features = [f for f in features if is_scored(f)]  # a Marcaj-export scene: its rows and canopies, not the model's
-    rows = sample_rows(features)
+    rows = sample_rows(features, min_canopy_m2=min_canopy_m2)
     pois = gap_pois(rows, obstacles=obstacles, rule=rule, k=k, floor=floor)
     counts = {key: sum(p["properties"]["reason"] == key[0] and p["properties"]["challenge"] == key[1] for p in pois) for key in (("gap", True), ("gap", False), ("planting", True), ("planting", False), ("obstacle", False))}
     print(f"{counts} (reason, challenge) from {len(rows)} rows in {time.perf_counter() - started:.1f} s")
@@ -397,5 +450,7 @@ if __name__ == "__main__":
     parser.add_argument("--gap-rule", choices=("fixed", "deviation"), default=GAP_RULE)
     parser.add_argument("--gap-k", type=float, default=GAP_K)
     parser.add_argument("--gap-floor", type=float, default=GAP_FLOOR_M)
+    parser.add_argument("--min-canopy-m2", type=float, default=PLANTED_MIN_M2,
+                        help="organizer style: canopies under this (whole across tile edges) are not planted evidence, e.g. 0.25; 0 = off")
     args = parser.parse_args()
-    main(args.scene, args.output, not args.no_satellite, args.obstacles, args.gap_rule, args.gap_k, args.gap_floor)
+    main(args.scene, args.output, not args.no_satellite, args.obstacles, args.gap_rule, args.gap_k, args.gap_floor, args.min_canopy_m2)
