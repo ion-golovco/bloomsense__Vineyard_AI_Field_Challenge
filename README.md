@@ -1,8 +1,8 @@
-# Agrocontrol by BloomSense: Marcaj Vineyard AI Field Challenge
+# BloomSense: Marcaj Vineyard AI Field Challenge
 
 Deeptech GigaHack 2026, team BloomSense.
 
-Agrocontrol turns the 311 Sireț3 drone tiles (RGB, 2.5 cm/px, EPSG:32635) into vineyard annotations in the organizers' four classes: `vineyard` canopy polygons, `row` axes, `interrow_area` polygons and `waste` boxes, with `vineyard_id`, `row_id`, `row_structure` and `interrow_cover`. The annotations go to Marcaj as pre-annotations and are corrected there by hand. From the corrected Marcaj export the pipeline computes block and row counts, row lengths and areas (`measurements.csv`), inspection points at row gaps and missing planting, and a closed walking route from the organizer START that stays in inter-rows and authorised passages (`route.geojson`). A web map shows fields, IDs, measurements and routes, and plans new routes on request.
+BloomSense turns the 311 Sireț3 drone tiles (RGB, 2.5 cm/px, EPSG:32635) into vineyard annotations in the organizers' four classes: `vineyard` canopy polygons, `row` axes, `interrow_area` polygons and `waste` boxes, with `vineyard_id`, `row_id`, `row_structure` and `interrow_cover`. The annotations go to Marcaj as pre-annotations and are corrected there by hand. From the corrected Marcaj export the pipeline computes block and row counts, row lengths and areas (`measurements.csv`), inspection points at row gaps and missing planting, and a closed walking route from the organizer START that stays in inter-rows and authorised passages (`route.geojson`). A web map shows fields, IDs, measurements and routes, and plans new routes on request.
 
 Demo: served from the team laptop at `http://127.0.0.1:8000` (see [Web app](#web-app)).
 
@@ -204,16 +204,16 @@ uv run --frozen python -m marcaj.telegram_bot --check                           
 ## Docker
 
 ```sh
-docker build -t agrocontrol .
+docker build -t bloomsense .
 
 # the app on http://127.0.0.1:8000, serving data/generated/scene.json
-docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" agrocontrol
+docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" bloomsense
 
 # the pipeline; the submission files land in ./output/
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output \
-    agrocontrol /app/scripts/run_all.sh                                   # automatic
+    bloomsense /app/scripts/run_all.sh                                   # automatic
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output \
-    agrocontrol /app/scripts/run_all.sh /app/data/marcaj_export.zip      # from the Marcaj export
+    bloomsense /app/scripts/run_all.sh /app/data/marcaj_export.zip      # from the Marcaj export
 ```
 
 The image is Python 3.11 slim with `uv sync --frozen --group sam`, the web client built in a Node 22 stage, and `models/canopy_net.pt`. The data is not in the image: mount `data/`. The locked Linux PyTorch wheel brings its CUDA runtime, so the image is several GB. In the container PyTorch runs on CPU (no MPS), so the prediction takes longer than the table below; give Docker at least 6 GB of memory.

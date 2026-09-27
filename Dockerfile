@@ -1,8 +1,8 @@
-# Agrocontrol by BloomSense: the client app (default) and the processing pipeline in one image.
+# BloomSense: the client app (default) and the processing pipeline in one image.
 # The organizer data is NOT in the image: mount the repository's data/ at /app/data (see README.md, "Docker").
-#   docker build -t agrocontrol .
-#   docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" agrocontrol
-#   docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output agrocontrol /app/scripts/run_all.sh
+#   docker build -t bloomsense .
+#   docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" bloomsense
+#   docker run --rm -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" -e OUT=/app/output bloomsense /app/scripts/run_all.sh
 
 FROM node:22-slim AS web
 WORKDIR /app/web

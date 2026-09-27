@@ -504,7 +504,7 @@ function switchView(next: AppView, focus = true): void {
   if (scene && field) renderField();
   else applyVisibility();
   const titles = { 'per-field': 'Per field', 'all-fields': 'All fields', measurements: 'Measurements', analysis: 'NDVI / NDMI / Cadastru', yield: 'Yield & harvest' };
-  document.title = `${titles[view]} · Agrocontrol by BloomSense`;
+  document.title = `${titles[view]} · BloomSense`;
   if (focus) el(view === 'yield' ? 'yield-title' : view === 'analysis' ? 'analysis-title' : view === 'measurements' ? 'measure-title' : view === 'all-fields' ? 'overview-title' : 'field-select').focus();
   if (view !== 'yield') requestAnimationFrame(() => { map.invalidateSize(); fitField(); });
 }

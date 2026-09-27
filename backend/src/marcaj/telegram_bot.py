@@ -311,7 +311,7 @@ def _legend(rgb: np.ndarray, result: dict[str, Any], px: float) -> None:
         else:
             _disc(rgb, x0 + 21, y + 7, 7, {"missing": MISSING_RGB, "waste": WASTE_RGB, "skipped": SKIPPED_RGB}[kind])
         _text(rgb, x0 + 42, y, text, 2)
-    _text(rgb, x0 + 8, 16 + 22 * (len(rows) + 1), "AGROCONTROL BY BLOOMSENSE", 1, (200, 200, 200))
+    _text(rgb, x0 + 8, 16 + 22 * (len(rows) + 1), "BLOOMSENSE", 1, (200, 200, 200))
     # scale bar along the bottom
     height_px, width_px = rgb.shape[1:]
     metres = max((m for m in (5, 10, 20, 50, 100, 200, 500) if m / px <= width_px / 5), default=5)
@@ -352,7 +352,7 @@ def _maps(point: Point) -> str:
 def message(result: dict[str, Any]) -> str:
     field, stops, skipped = result["field"], result["stops"], result["skipped"]
     length = result["properties"].get("length_m", 0.0)
-    lines = [f"Agrocontrol inspection walk: {f'field {field}' if field else 'whole farm'}"]
+    lines = [f"BloomSense inspection walk: {f'field {field}' if field else 'whole farm'}"]
     if stops:
         lines += [f"Route {length / 1000:.2f} km, about {round(length / (WALK_KMH * 1000 / 60))} min walking at {WALK_KMH:.0f} km/h, from START and back.",
                   f"{len(stops)} stop{'s' if len(stops) > 1 else ''} in walking order (numbers match the map):"]
@@ -435,7 +435,7 @@ def answer(field: str | None) -> tuple[bytes, str, str]:
 
 
 def intro() -> str:
-    return ("Agrocontrol by BloomSense: your field's inspection walk from the drone survey, as a map and a checklist.\n"
+    return ("BloomSense: your field's inspection walk from the drone survey, as a map and a checklist.\n"
             "Send a field id (for example V06-03) or /site for the whole farm.\n"
             f"Fields: {', '.join(fields())}")
 
@@ -514,7 +514,7 @@ def _send(token: str, method: str, fields: dict[str, Any], photo: bytes | None =
 def reply(text: str) -> tuple[str | None, bytes | None, str, str]:
     """What to answer a message: (field or None, PNG or None, caption, text)."""
     command, _, rest = text.strip().partition(" ")
-    command = command.split("@")[0].lower()  # "/site@AgrocontrolBot" in group chats
+    command = command.split("@")[0].lower()  # "/site@bloomsense_marcajbot" in group chats
     if command == "/site":
         return None, *answer(None)
     wanted = rest.strip() if command == "/field" else text if not command.startswith("/") else ""
