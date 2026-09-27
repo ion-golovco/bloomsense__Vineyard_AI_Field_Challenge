@@ -9,7 +9,7 @@ HOST=0.0.0.0 scripts/demo.sh   # also lets a phone on the same Wi-Fi open http:/
 
 The bot reads `TELEGRAM_BOT_TOKEN` from `.env`. Only one bot process may run per token, so stop any other copy first.
 
-Organizers' pre-test (a start point, Web Mercator by default), with the app running: `scripts/pretest.sh X Y [EPSG] [OUT]` writes a closed route in the official format to `output/route_pretest.geojson` in seconds and prints its length, targets, outside share and legality.
+Organizers' pre-test (a start point, EPSG:32635 by default), with the app running: `scripts/pretest.sh X Y [EPSG] [OUT]` writes a closed route in the official format to `pretest/route_pretest.geojson` in seconds and prints its length, targets, outside share and legality.
 
 ## Click path
 

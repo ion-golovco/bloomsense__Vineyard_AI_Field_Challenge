@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BloomSense Metrics</title>
+<style>
+  :root { --ink: #1c2418; --muted: #5d6a57; --line: #dfe5da; --bg: #f7f9f5; --card: #ffffff; --accent: #2f6b2a; --ok: #1f7a3a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  .page { width: 1600px; padding: 28px 32px; display: grid; grid-template-columns: 1fr 470px; gap: 24px; }
+  header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid var(--accent); padding-bottom: 12px; }
+  h1 { margin: 0; font-size: 26px; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .total { text-align: right; }
+  .total b { font-size: 30px; color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { background: #eef2ea; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  td.w { font-weight: 700; color: var(--accent); white-space: nowrap; width: 58px; }
+  td.c { font-weight: 600; width: 170px; }
+  td.v b { font-variant-numeric: tabular-nums; }
+  .note { color: var(--muted); font-size: 12.5px; }
+  .ok { color: var(--ok); font-weight: 700; }
+  aside { background: var(--card); border: 1px solid var(--line); padding: 12px; }
+  aside h2 { margin: 0 0 6px; font-size: 16px; }
+  aside img { width: 100%; display: block; }
+  aside dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 10px 0 0; font-size: 13.5px; }
+  aside dt { color: var(--muted); }
+  aside dd { margin: 0; font-variant-numeric: tabular-nums; }
+  footer { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <h1>BloomSense · Vineyard AI Field Challenge (Marcaj)</h1>
+      <div class="sub">Marcaj project “Vineyard AI Field Challenge — Team Ion Golovco (v2)”, 311 tiles · github.com/ion-golovco/bloomsense__Vineyard_AI_Field_Challenge</div>
+    </div>
+    <div class="total"><b>46.07 / 50</b><div class="sub">local judge, organizer formulas, on the 50 points it can score</div></div>
+  </header>
+
+  <table>
+    <tr><th>Weight</th><th>Criterion</th><th>Our metrics</th></tr>
+    <tr><td class="w">25%</td><td class="c">Canopy segmentation</td>
+      <td class="v">0.6·IoU + 0.4·F1 = <b>0.865</b> (IoU <b>0.839</b>, F1 <b>0.903</b>) · 15,240 canopy polygons in the project<br>
+      <span class="note">Organizer example tiles r006_c004 and r021_c012 (per tile IoU 0.833 / 0.847)</span></td></tr>
+    <tr><td class="w">10%</td><td class="c">Waste detection</td>
+      <td class="v"><b>48</b> waste boxes in the project: piles of stones, sticks and plastic<br>
+      <span class="note">Not scorable locally: the example tiles contain no waste</span></td></tr>
+    <tr><td class="w">15%</td><td class="c">Axes and attributes</td>
+      <td class="v">Row axis F1 <b>1.000</b> (8%) · attributes <b>1.000</b> (5%) · vineyard_id grouping <b>1.000</b> (2%)<br>
+      <span class="note">792 rows (1,981 per-tile row pieces), 1,892 inter-row polygons, with row_structure and interrow_cover set</span></td></tr>
+    <tr><td class="w">10%</td><td class="c">Counts and measurements</td>
+      <td class="v">Blocks <b>53</b> · rows <b>792</b> · canopy area <b>14,135 m²</b> (1.414 ha) · inter-row area <b>93,745 m²</b> (9.374 ha) · total row length <b>50,174 m</b><br>
+      <span class="note">Whole site, from the Marcaj annotations (measurements.csv). On the example tiles: blocks 1.00, rows 1.00, canopy area 0.90, inter-row area 0.92, row length 0.91 → <b>0.945</b></span></td></tr>
+    <tr><td class="w">25%</td><td class="c">Walking route</td>
+      <td class="v">route.geojson from START: <b>14,211.6 m</b>, closed (<b>0.00 m</b> gap), <b>1.12%</b> outside inter-rows and passages (limit 2%), <b>0 m</b> in forbidden zones or canopy, <b>261 / 317</b> of our targets within 2 m<br>
+      Pre-test start: <b>14,400.6 m</b>, closed, <b>1.19%</b> outside, <b>264 / 317</b> targets, planned in <b>3.7 s</b> <span class="ok">✓ scores</span><br>
+      <span class="note">Targets = 269 row gaps / missing planting + 48 waste boxes. Hidden organizer targets are not known to us</span></td></tr>
+    <tr><td class="w">15%</td><td class="c">Engineering</td>
+      <td class="v">Full prediction of 311 tiles: <b>406 s</b>, 3.5 GB · whole pipeline ≈ <b>14 min</b> · route on request <b>0.3–3.7 s</b><br>
+      <span class="note">Apple M4 Pro (12 cores), 24 GB RAM, PyTorch on MPS · own U-Net (2.0 M parameters), weights in the repo · Dockerfile · no paid APIs or LLMs at runtime</span></td></tr>
+  </table>
+
+  <aside>
+    <h2>Pre-test route</h2>
+    <img src="route_pretest.png" alt="Pre-test route over the drone mosaic">
+    <dl>
+      <dt>Start given</dt><dd>X 629663.8, Y 5220195.3 (EPSG:32635) = 47.1225039° N, 28.7094577° E</dd>
+      <dt>Start used</dt><dd>X 629663.25, Y 5220195.65 (0.65 m onto the passage)</dd>
+      <dt>Length</dt><dd>14,400.6 m, returns to the start</dd>
+      <dt>Outside lanes</dt><dd>1.19% (limit 2%) · 0 m forbidden · 0 m canopy</dd>
+      <dt>Targets</dt><dd>264 of 317 within 2 m (red: missing vines, blue: waste)</dd>
+    </dl>
+  </aside>
+
+  <footer>Canopy, axes, attributes and counts: marcaj-judge (the brief's formulas) on the two organizer example tiles, which we also used while tuning, so these are a sanity check, not a hidden-set estimate. Route numbers: marcaj.routing.check_route in EPSG:32635 metres.</footer>
+</div>
+</body>
+</html>

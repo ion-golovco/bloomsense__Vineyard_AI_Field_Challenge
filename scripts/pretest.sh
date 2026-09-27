@@ -4,19 +4,19 @@
 #
 #   scripts/pretest.sh X Y [EPSG] [OUT]
 #
-# X Y: the start point, by default in Web Mercator (EPSG 3857); pass 32635 for UTM, 4326 for lon lat.
-# OUT: default output/route_pretest.geojson, the official format (one LineString in EPSG:32635 with length_m).
+# X Y: the start point, by default in UTM 35N (EPSG 32635, as the organizers give it); pass 3857 for Web Mercator, 4326 for lon lat.
+# OUT: default pretest/route_pretest.geojson, the official format (one LineString in EPSG:32635 with length_m).
 # The route file in the repo root is never touched.
 set -euo pipefail
 
 if [ $# -lt 2 ]; then
-  echo "usage: scripts/pretest.sh X Y [EPSG, default 3857] [OUT, default output/route_pretest.geojson]" >&2
+  echo "usage: scripts/pretest.sh X Y [EPSG, default 32635] [OUT, default pretest/route_pretest.geojson]" >&2
   exit 2
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8000}"
-OUT="${4:-$ROOT/output/route_pretest.geojson}"
+OUT="${4:-$ROOT/pretest/route_pretest.geojson}"
 mkdir -p "$(dirname "$OUT")"
 
 if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/scene"; then
@@ -24,7 +24,7 @@ if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/scene"; then
   exit 1
 fi
 
-X="$1" Y="$2" EPSG="${3:-3857}" OUT="$OUT" PORT="$PORT" uv run --frozen --project "$ROOT/backend" python - <<'EOF'
+X="$1" Y="$2" EPSG="${3:-32635}" OUT="$OUT" PORT="$PORT" uv run --frozen --project "$ROOT/backend" python - <<'EOF'
 import json, os, sys, urllib.error, urllib.request
 from pyproj import Transformer
 
